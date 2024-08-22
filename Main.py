@@ -74,11 +74,11 @@ st.title("Reorder Report Generator (90 Days Sales)")
 # Add tooltips to provide guidance on file uploads
 st.sidebar.header("Upload Data")
 
-st.sidebar.file_uploader("Upload 90-Day Sales Data (CSV)", type="csv",
-                         help="Upload the 'Forecast 90' Shopify report. This file should contain columns such as 'variant_sku' and 'net_quantity'.")
+sales_file = st.sidebar.file_uploader("Upload 90-Day Sales Data (CSV)", type="csv",
+                                      help="Upload the 'Forecast 90' Shopify report. This file should contain columns such as 'variant_sku' and 'net_quantity'.")
 
-st.sidebar.file_uploader("Upload Inventory Data (CSV)", type="csv",
-                         help="Upload the inventory data file. This file should include columns such as 'Part No.', 'Available', 'Expected, available', and 'Lead time'.")
+inventory_file = st.sidebar.file_uploader("Upload Inventory Data (CSV)", type="csv",
+                                          help="Upload the inventory data file. This file should include columns such as 'Part No.', 'Available', 'Expected, available', and 'Lead time'.")
 
 # Add a slider for safety stock
 safety_stock_days = st.sidebar.slider(
@@ -90,10 +90,10 @@ safety_stock_days = st.sidebar.slider(
 )
 
 # Logic to handle file uploads and report generation
-if 'sales_data' in st.session_state and 'inventory_data' in st.session_state:
-    sales_data = st.session_state['sales_data']
-    inventory_data = st.session_state['inventory_data']
-
+if sales_file and inventory_file:
+    sales_data = pd.read_csv(sales_file)
+    inventory_data = pd.read_csv(inventory_file)
+    
     if st.sidebar.button("Generate Reorder Report"):
         forecast_df, reorder_df = generate_report(sales_data, inventory_data, safety_stock_days)
         
