@@ -60,10 +60,16 @@ def generate_report(sales_data, inventory_data):
         reorder_qty = max(forecast_30_qty + forecast_90_qty - (inventory_data.loc[inventory_data['Part No.'] == sku, 'In stock'].values[0] + inbound_qty), 0)
 
         forecast_report.append([product_name, sku, velocity, forecast_30_qty, forecast_90_qty, inventory_need_30])
-        reorder_report.append([product_name, sku, inbound_qty, reorder_qty])
+        
+        if reorder_qty > 0:  # Only include items that need to be reordered
+            reorder_report.append([product_name, sku, inbound_qty, reorder_qty, forecast_30_qty])
 
     forecast_df = pd.DataFrame(forecast_report, columns=['Product', 'SKU', 'Sales Velocity', 'Forecast Sales Qty (30 Days)', 'Forecast Sales Qty (90 Days)', 'Forecast Inventory Need (30 Days)'])
-    reorder_df = pd.DataFrame(reorder_report, columns=['Product', 'SKU', 'Inbound', 'Qty to Reorder Now'])
+    reorder_df = pd.DataFrame(reorder_report, columns=['Product', 'SKU', 'Inbound', 'Qty to Reorder Now', 'Forecast Sales Qty (30 Days)'])
+
+    # Format reorder quantities as whole numbers
+    reorder_df['Qty to Reorder Now'] = reorder_df['Qty to Reorder Now'].astype(int)
+    reorder_df['Forecast Sales Qty (30 Days)'] = reorder_df['Forecast Sales Qty (30 Days)'].astype(int)
 
     return forecast_df, reorder_df
 
