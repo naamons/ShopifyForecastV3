@@ -1,12 +1,11 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from sklearn.impute import SimpleImputer
 from io import BytesIO
 
 def calculate_sales_velocity_90days(sales_data):
     sales_data['Total Quantity'] = sales_data['net_quantity']
-    sales_velocity = sales_data.groupby('product_title')['Total Quantity'].sum() / 90  # Average daily sales over 90 days
+    sales_velocity = sales_data.groupby('variant_sku')['Total Quantity'].sum() / 90  # Average daily sales over 90 days
     return sales_velocity
 
 def generate_forecast(sales_velocity, days=30):
@@ -24,8 +23,8 @@ def generate_report(sales_data, inventory_data):
 
     for sku in inventory_data['Part No.']:
         product_name = inventory_data.loc[inventory_data['Part No.'] == sku, 'Part description'].values[0]
-        velocity = sales_velocity.get(product_name, 0)
-        forecast_30_qty = forecast_30.get(product_name, 0)
+        velocity = sales_velocity.get(sku, 0)
+        forecast_30_qty = forecast_30.get(sku, 0)
         current_stock = inventory_data.loc[inventory_data['Part No.'] == sku, 'In stock'].values[0]
         inbound_qty = inventory_data.loc[inventory_data['Part No.'] == sku, 'Expected, available'].values[0]
         lead_time = inventory_data.loc[inventory_data['Part No.'] == sku, 'Lead time'].values[0]
