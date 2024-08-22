@@ -63,8 +63,23 @@ def generate_report(sales_data, inventory_data, safety_stock_days):
 def to_excel(forecast_df, reorder_df):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        # Write forecast and reorder dataframes to separate sheets
         forecast_df.to_excel(writer, index=False, sheet_name='Forecast')
         reorder_df.to_excel(writer, index=False, sheet_name='Reorder')
+
+        # Access the workbook and the worksheets
+        workbook = writer.book
+        forecast_sheet = writer.sheets['Forecast']
+        reorder_sheet = writer.sheets['Reorder']
+
+        # Format the sheets as tables
+        for worksheet, df in zip([forecast_sheet, reorder_sheet], [forecast_df, reorder_df]):
+            (max_row, max_col) = df.shape
+            worksheet.add_table(0, 0, max_row, max_col - 1, {
+                'columns': [{'header': column} for column in df.columns],
+                'style': 'Table Style Medium 2'
+            })
+
     processed_data = output.getvalue()
     return processed_data
 
