@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from io import BytesIO
+import matplotlib.pyplot as plt
 
 def calculate_sales_velocity_90days(sales_data):
     sales_data['Total Quantity'] = sales_data['net_quantity']
@@ -39,7 +40,7 @@ def generate_report(sales_data, inventory_data, safety_stock_days):
         # Reorder quantity calculation including safety stock
         reorder_qty = max(forecast_30_qty + forecast_need_lead_time + safety_stock - (current_available + inbound_qty), 0)
 
-        forecast_report.append([product_name, sku, round(reorder_qty), round(velocity), forecast_30_qty, current_available, inbound_qty, lead_time, safety_stock, forecast_need_lead_time])
+        forecast_report.append([product_name, sku, round(reorder_qty), velocity, forecast_30_qty, current_available, inbound_qty, lead_time, safety_stock, forecast_need_lead_time])
         
         if reorder_qty > 0:
             reorder_report.append([product_name, sku, round(reorder_qty), current_available, inbound_qty, lead_time, safety_stock, forecast_30_qty])
@@ -54,10 +55,10 @@ def generate_report(sales_data, inventory_data, safety_stock_days):
         'Safety Stock', 'Forecast Sales Qty (30 Days)'
     ])
 
-    # Ensure all relevant columns are integers
-    forecast_df[['Qty to Reorder Now', 'Sales Velocity', 'Forecast Sales Qty (30 Days)', 'Current Available Stock', 
+    # Ensure relevant columns are integers
+    forecast_df[['Qty to Reorder Now', 'Forecast Sales Qty (30 Days)', 'Current Available Stock', 
                  'Inbound Stock', 'Lead Time (Days)', 'Safety Stock', 'Forecast Inventory Need (With Lead Time)']] = forecast_df[[
-        'Qty to Reorder Now', 'Sales Velocity', 'Forecast Sales Qty (30 Days)', 'Current Available Stock', 
+        'Qty to Reorder Now', 'Forecast Sales Qty (30 Days)', 'Current Available Stock', 
         'Inbound Stock', 'Lead Time (Days)', 'Safety Stock', 'Forecast Inventory Need (With Lead Time)'
     ]].astype(int)
 
@@ -101,6 +102,22 @@ def to_excel(forecast_df, reorder_df):
     processed_data = output.getvalue()
     return processed_data
 
+def plot_top_sellers(sales_data, inventory_data):
+    top_sellers = sales_data.groupby('variant_sku')['net_quantity'].sum().sort_values(ascending=False).head(10)
+    top_sellers = top_sellers.reset_index()
+    top_sellers = top_sellers.merge(inventory_data[['Part No.', 'Available']], left_on='variant_sku', right_on='Part No.', how='left')
+    
+    fig, ax = plt.subplots()
+    ax.barh(top_sellers['variant_sku'], top_sellers['net_quantity'], color='skyblue', label='Total Sold (90 Days)')
+    ax.barh(top_sellers['variant_sku'], top_sellers['Available'], color='orange', label='Current Available Stock')
+    
+    ax.set_xlabel('Quantity')
+    ax.set_title('Top 10 Selling Products and Their Inventory Condition')
+    ax.invert_yaxis()
+    ax.legend()
+    
+    return fig
+
 # Streamlit app
 st.title("Reorder Report Generator (90 Days Sales)")
 
@@ -126,6 +143,11 @@ safety_stock_days = st.sidebar.slider(
 if sales_file and inventory_file:
     sales_data = pd.read_csv(sales_file)
     inventory_data = pd.read_csv(inventory_file)
+    
+    # Generate and display top sellers chart
+    st.subheader("Top 10 Selling Products and Their Inventory Condition")
+    top_sellers_fig = plot_top_sellers(sales_data, inventory_data)
+    st.pyplot(top_sellers_fig)
     
     if st.sidebar.button("Generate Reorder Report"):
         forecast_df, reorder_df = generate_report(sales_data, inventory_data, safety_stock_days)
