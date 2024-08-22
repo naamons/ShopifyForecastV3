@@ -1,17 +1,21 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from sklearn.linear_model import LinearRegression
 from sklearn.impute import SimpleImputer
 from io import BytesIO
 
-def calculate_sales_velocity(sales_data):
+def calculate_sales_velocity(sales_data, window=7):
     if 'day' not in sales_data.columns:
         st.error("The 'day' column is missing from the sales data. Please ensure the correct file is uploaded.")
         return None
 
     sales_data['day'] = pd.to_datetime(sales_data['day'])
-    sales_velocity = sales_data.groupby('variant_sku')['ordered_item_quantity'].sum() / \
+    sales_data = sales_data.sort_values(by='day')
+    
+    # Calculate rolling average to smooth out sales data
+    sales_data['rolling_quantity'] = sales_data.groupby('variant_sku')['ordered_item_quantity'].transform(lambda x: x.rolling(window, min_periods=1).mean())
+    
+    sales_velocity = sales_data.groupby('variant_sku')['rolling_quantity'].sum() / \
                      (sales_data['day'].max() - sales_data['day'].min()).days
     return sales_velocity
 
@@ -20,14 +24,10 @@ def generate_forecast(sales_data, sales_velocity):
     forecast_90 = {}
     for sku in sales_velocity.index:
         sku_data = sales_data[sales_data['variant_sku'] == sku]
-        if len(sku_data) >= 2:  # At least two data points needed for Linear Regression
-            model = LinearRegression()
-            X = np.arange(len(sku_data)).reshape(-1, 1)
-            y = sku_data['ordered_item_quantity'].values
-            model.fit(X, y)
-            future_sales = model.predict(np.array([[len(sku_data) + i] for i in range(90)]))
-            forecast_30[sku] = future_sales[:30].sum()  # 30-day forecast
-            forecast_90[sku] = future_sales.sum()  # 90-day forecast
+        rolling_quantity = sku_data['rolling_quantity'].values
+        if len(rolling_quantity) >= 2:  # At least two data points needed for a meaningful forecast
+            forecast_30[sku] = rolling_quantity[-30:].sum()
+            forecast_90[sku] = rolling_quantity[-90:].sum()
         else:
             forecast_30[sku] = sales_velocity[sku] * 30
             forecast_90[sku] = sales_velocity[sku] * 90
