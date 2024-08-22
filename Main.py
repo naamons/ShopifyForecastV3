@@ -69,10 +69,9 @@ def generate_report(sales_data, inventory_data):
 
 def to_excel(forecast_df, reorder_df):
     output = BytesIO()
-    writer = pd.ExcelWriter(output, engine='xlsxwriter')
-    forecast_df.to_excel(writer, index=False, sheet_name='Forecast')
-    reorder_df.to_excel(writer, index=False, sheet_name='Reorder')
-    writer.save()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        forecast_df.to_excel(writer, index=False, sheet_name='Forecast')
+        reorder_df.to_excel(writer, index=False, sheet_name='Reorder')
     processed_data = output.getvalue()
     return processed_data
 
