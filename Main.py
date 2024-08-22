@@ -15,6 +15,10 @@ def calculate_sales_velocity(sales_data, window=7):
     # Calculate rolling average to smooth out sales data
     sales_data['rolling_quantity'] = sales_data.groupby('variant_sku')['ordered_item_quantity'].transform(lambda x: x.rolling(window, min_periods=1).mean())
     
+    if 'rolling_quantity' not in sales_data.columns:
+        st.error("'rolling_quantity' column could not be created. Check the data processing steps.")
+        return None
+
     sales_velocity = sales_data.groupby('variant_sku')['rolling_quantity'].sum() / \
                      (sales_data['day'].max() - sales_data['day'].min()).days
     return sales_velocity
@@ -24,11 +28,16 @@ def generate_forecast(sales_data, sales_velocity):
     forecast_90 = {}
     for sku in sales_velocity.index:
         sku_data = sales_data[sales_data['variant_sku'] == sku]
-        rolling_quantity = sku_data['rolling_quantity'].values
-        if len(rolling_quantity) >= 2:  # At least two data points needed for a meaningful forecast
-            forecast_30[sku] = rolling_quantity[-30:].sum()
-            forecast_90[sku] = rolling_quantity[-90:].sum()
+        if 'rolling_quantity' in sku_data.columns:
+            rolling_quantity = sku_data['rolling_quantity'].values
+            if len(rolling_quantity) >= 2:  # At least two data points needed for a meaningful forecast
+                forecast_30[sku] = rolling_quantity[-30:].sum()
+                forecast_90[sku] = rolling_quantity[-90:].sum()
+            else:
+                forecast_30[sku] = sales_velocity[sku] * 30
+                forecast_90[sku] = sales_velocity[sku] * 90
         else:
+            st.error(f"'rolling_quantity' column missing in data for SKU {sku}")
             forecast_30[sku] = sales_velocity[sku] * 30
             forecast_90[sku] = sales_velocity[sku] * 90
     return forecast_30, forecast_90
