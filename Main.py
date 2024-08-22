@@ -27,22 +27,22 @@ def generate_report(sales_data, inventory_data, safety_stock_days):
         if velocity <= 0:
             continue  # Skip SKUs with no sales activity
         
-        forecast_30_qty = forecast_30.get(sku, 0)
+        forecast_30_qty = round(forecast_30.get(sku, 0))
         current_available = inventory_data.loc[inventory_data['Part No.'] == sku, 'Available'].values[0]
         inbound_qty = inventory_data.loc[inventory_data['Part No.'] == sku, 'Expected, available'].values[0]
         lead_time = inventory_data.loc[inventory_data['Part No.'] == sku, 'Lead time'].values[0]
 
         # Forecasted inventory need including lead time and safety stock
-        forecast_need_lead_time = velocity * lead_time
-        safety_stock = velocity * safety_stock_days
+        forecast_need_lead_time = round(velocity * lead_time)
+        safety_stock = round(velocity * safety_stock_days)
         
         # Reorder quantity calculation including safety stock
         reorder_qty = max(forecast_30_qty + forecast_need_lead_time + safety_stock - (current_available + inbound_qty), 0)
 
-        forecast_report.append([product_name, sku, reorder_qty, velocity, forecast_30_qty, current_available, inbound_qty, lead_time, safety_stock, forecast_need_lead_time])
+        forecast_report.append([product_name, sku, round(reorder_qty), round(velocity), forecast_30_qty, current_available, inbound_qty, lead_time, safety_stock, forecast_need_lead_time])
         
         if reorder_qty > 0:
-            reorder_report.append([product_name, sku, reorder_qty, current_available, inbound_qty, lead_time, safety_stock, forecast_30_qty])
+            reorder_report.append([product_name, sku, round(reorder_qty), current_available, inbound_qty, lead_time, safety_stock, forecast_30_qty])
 
     forecast_df = pd.DataFrame(forecast_report, columns=[
         'Product', 'SKU', 'Qty to Reorder Now', 'Sales Velocity', 'Forecast Sales Qty (30 Days)', 'Current Available Stock', 
@@ -54,9 +54,18 @@ def generate_report(sales_data, inventory_data, safety_stock_days):
         'Safety Stock', 'Forecast Sales Qty (30 Days)'
     ])
 
-    # Format reorder quantities as whole numbers
-    reorder_df['Qty to Reorder Now'] = reorder_df['Qty to Reorder Now'].astype(int)
-    reorder_df['Forecast Sales Qty (30 Days)'] = reorder_df['Forecast Sales Qty (30 Days)'].astype(int)
+    # Ensure all relevant columns are integers
+    forecast_df[['Qty to Reorder Now', 'Sales Velocity', 'Forecast Sales Qty (30 Days)', 'Current Available Stock', 
+                 'Inbound Stock', 'Lead Time (Days)', 'Safety Stock', 'Forecast Inventory Need (With Lead Time)']] = forecast_df[[
+        'Qty to Reorder Now', 'Sales Velocity', 'Forecast Sales Qty (30 Days)', 'Current Available Stock', 
+        'Inbound Stock', 'Lead Time (Days)', 'Safety Stock', 'Forecast Inventory Need (With Lead Time)'
+    ]].astype(int)
+
+    reorder_df[['Qty to Reorder Now', 'Current Available Stock', 'Inbound Stock', 'Lead Time (Days)', 
+                'Safety Stock', 'Forecast Sales Qty (30 Days)']] = reorder_df[[
+        'Qty to Reorder Now', 'Current Available Stock', 'Inbound Stock', 'Lead Time (Days)', 
+        'Safety Stock', 'Forecast Sales Qty (30 Days)'
+    ]].astype(int)
 
     return forecast_df, reorder_df
 
