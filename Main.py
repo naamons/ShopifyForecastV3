@@ -39,19 +39,19 @@ def generate_report(sales_data, inventory_data, safety_stock_days):
         # Reorder quantity calculation including safety stock
         reorder_qty = max(forecast_30_qty + forecast_need_lead_time + safety_stock - (current_available + inbound_qty), 0)
 
-        forecast_report.append([product_name, sku, velocity, forecast_30_qty, current_available, inbound_qty, lead_time, safety_stock, forecast_need_lead_time])
+        forecast_report.append([product_name, sku, reorder_qty, velocity, forecast_30_qty, current_available, inbound_qty, lead_time, safety_stock, forecast_need_lead_time])
         
         if reorder_qty > 0:
-            reorder_report.append([product_name, sku, current_available, inbound_qty, lead_time, safety_stock, reorder_qty, forecast_30_qty])
+            reorder_report.append([product_name, sku, reorder_qty, current_available, inbound_qty, lead_time, safety_stock, forecast_30_qty])
 
     forecast_df = pd.DataFrame(forecast_report, columns=[
-        'Product', 'SKU', 'Sales Velocity', 'Forecast Sales Qty (30 Days)', 'Current Available Stock', 
+        'Product', 'SKU', 'Qty to Reorder Now', 'Sales Velocity', 'Forecast Sales Qty (30 Days)', 'Current Available Stock', 
         'Inbound Stock', 'Lead Time (Days)', 'Safety Stock', 'Forecast Inventory Need (With Lead Time)'
     ])
     
     reorder_df = pd.DataFrame(reorder_report, columns=[
-        'Product', 'SKU', 'Current Available Stock', 'Inbound Stock', 'Lead Time (Days)', 
-        'Safety Stock', 'Qty to Reorder Now', 'Forecast Sales Qty (30 Days)'
+        'Product', 'SKU', 'Qty to Reorder Now', 'Current Available Stock', 'Inbound Stock', 'Lead Time (Days)', 
+        'Safety Stock', 'Forecast Sales Qty (30 Days)'
     ])
 
     # Format reorder quantities as whole numbers
@@ -79,6 +79,10 @@ def to_excel(forecast_df, reorder_df):
                 'columns': [{'header': column} for column in df.columns],
                 'style': 'Table Style Medium 2'
             })
+
+        # Highlight the "Qty to Reorder Now" column in a different color
+        reorder_col_index = reorder_df.columns.get_loc("Qty to Reorder Now")
+        reorder_sheet.set_column(reorder_col_index, reorder_col_index, None, workbook.add_format({'bg_color': '#FFC7CE'}))
 
     processed_data = output.getvalue()
     return processed_data
