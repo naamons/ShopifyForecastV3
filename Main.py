@@ -11,7 +11,7 @@ def calculate_sales_velocity_90days(sales_data):
 def generate_forecast(sales_velocity, days=30):
     return sales_velocity * days  # Forecasting based on current velocity
 
-def generate_report(sales_data, inventory_data):
+def generate_report(sales_data, inventory_data, safety_stock_days):
     sales_velocity = calculate_sales_velocity_90days(sales_data)
     forecast_30 = generate_forecast(sales_velocity, 30)
 
@@ -24,30 +24,34 @@ def generate_report(sales_data, inventory_data):
     for sku in inventory_data['Part No.']:
         product_name = inventory_data.loc[inventory_data['Part No.'] == sku, 'Part description'].values[0]
         velocity = sales_velocity.get(sku, 0)
+        if velocity <= 0:
+            continue  # Skip SKUs with no sales activity
+        
         forecast_30_qty = forecast_30.get(sku, 0)
         current_available = inventory_data.loc[inventory_data['Part No.'] == sku, 'Available'].values[0]
         inbound_qty = inventory_data.loc[inventory_data['Part No.'] == sku, 'Expected, available'].values[0]
         lead_time = inventory_data.loc[inventory_data['Part No.'] == sku, 'Lead time'].values[0]
 
-        # Forecasted inventory need including lead time
+        # Forecasted inventory need including lead time and safety stock
         forecast_need_lead_time = velocity * lead_time
+        safety_stock = velocity * safety_stock_days
         
-        # Reorder quantity calculation
-        reorder_qty = max(forecast_30_qty + forecast_need_lead_time - (current_available + inbound_qty), 0)
+        # Reorder quantity calculation including safety stock
+        reorder_qty = max(forecast_30_qty + forecast_need_lead_time + safety_stock - (current_available + inbound_qty), 0)
 
-        forecast_report.append([product_name, sku, velocity, forecast_30_qty, current_available, inbound_qty, lead_time, forecast_need_lead_time])
+        forecast_report.append([product_name, sku, velocity, forecast_30_qty, current_available, inbound_qty, lead_time, safety_stock, forecast_need_lead_time])
         
         if reorder_qty > 0:
-            reorder_report.append([product_name, sku, current_available, inbound_qty, lead_time, reorder_qty, forecast_30_qty])
+            reorder_report.append([product_name, sku, current_available, inbound_qty, lead_time, safety_stock, reorder_qty, forecast_30_qty])
 
     forecast_df = pd.DataFrame(forecast_report, columns=[
         'Product', 'SKU', 'Sales Velocity', 'Forecast Sales Qty (30 Days)', 'Current Available Stock', 
-        'Inbound Stock', 'Lead Time (Days)', 'Forecast Inventory Need (With Lead Time)'
+        'Inbound Stock', 'Lead Time (Days)', 'Safety Stock', 'Forecast Inventory Need (With Lead Time)'
     ])
     
     reorder_df = pd.DataFrame(reorder_report, columns=[
         'Product', 'SKU', 'Current Available Stock', 'Inbound Stock', 'Lead Time (Days)', 
-        'Qty to Reorder Now', 'Forecast Sales Qty (30 Days)'
+        'Safety Stock', 'Qty to Reorder Now', 'Forecast Sales Qty (30 Days)'
     ])
 
     # Format reorder quantities as whole numbers
@@ -67,16 +71,31 @@ def to_excel(forecast_df, reorder_df):
 # Streamlit app
 st.title("Reorder Report Generator (90 Days Sales)")
 
+# Add tooltips to provide guidance on file uploads
 st.sidebar.header("Upload Data")
-sales_file = st.sidebar.file_uploader("Upload 90-Day Sales Data (CSV)", type="csv")
-inventory_file = st.sidebar.file_uploader("Upload Inventory Data (CSV)", type="csv")
 
-if sales_file and inventory_file:
-    sales_data = pd.read_csv(sales_file)
-    inventory_data = pd.read_csv(inventory_file)
-    
+st.sidebar.file_uploader("Upload 90-Day Sales Data (CSV)", type="csv",
+                         help="Upload the 'Forecast 90' Shopify report. This file should contain columns such as 'variant_sku' and 'net_quantity'.")
+
+st.sidebar.file_uploader("Upload Inventory Data (CSV)", type="csv",
+                         help="Upload the inventory data file. This file should include columns such as 'Part No.', 'Available', 'Expected, available', and 'Lead time'.")
+
+# Add a slider for safety stock
+safety_stock_days = st.sidebar.slider(
+    "Safety Stock (in days)", 
+    min_value=0, 
+    max_value=30, 
+    value=7, 
+    help="Adjust the safety stock buffer. The default is 7 days."
+)
+
+# Logic to handle file uploads and report generation
+if 'sales_data' in st.session_state and 'inventory_data' in st.session_state:
+    sales_data = st.session_state['sales_data']
+    inventory_data = st.session_state['inventory_data']
+
     if st.sidebar.button("Generate Reorder Report"):
-        forecast_df, reorder_df = generate_report(sales_data, inventory_data)
+        forecast_df, reorder_df = generate_report(sales_data, inventory_data, safety_stock_days)
         
         if forecast_df is not None and reorder_df is not None:
             st.subheader("Forecast Report")
