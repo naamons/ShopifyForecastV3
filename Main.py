@@ -80,6 +80,11 @@ def to_excel(forecast_df, reorder_df):
                 'style': 'Table Style Medium 2'
             })
 
+            # Auto-size the columns
+            for i, col in enumerate(df.columns):
+                column_len = df[col].astype(str).map(len).max()
+                worksheet.set_column(i, i, column_len + 2)  # Adjust the width
+
         # Highlight the "Qty to Reorder Now" column in a different color
         reorder_col_index = reorder_df.columns.get_loc("Qty to Reorder Now")
         reorder_sheet.set_column(reorder_col_index, reorder_col_index, None, workbook.add_format({'bg_color': '#FFC7CE'}))
