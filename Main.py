@@ -25,7 +25,7 @@ def generate_report(sales_data, inventory_data):
         product_name = inventory_data.loc[inventory_data['Part No.'] == sku, 'Part description'].values[0]
         velocity = sales_velocity.get(sku, 0)
         forecast_30_qty = forecast_30.get(sku, 0)
-        current_stock = inventory_data.loc[inventory_data['Part No.'] == sku, 'In stock'].values[0]
+        current_available = inventory_data.loc[inventory_data['Part No.'] == sku, 'Available'].values[0]
         inbound_qty = inventory_data.loc[inventory_data['Part No.'] == sku, 'Expected, available'].values[0]
         lead_time = inventory_data.loc[inventory_data['Part No.'] == sku, 'Lead time'].values[0]
 
@@ -33,20 +33,20 @@ def generate_report(sales_data, inventory_data):
         forecast_need_lead_time = velocity * lead_time
         
         # Reorder quantity calculation
-        reorder_qty = max(forecast_30_qty + forecast_need_lead_time - (current_stock + inbound_qty), 0)
+        reorder_qty = max(forecast_30_qty + forecast_need_lead_time - (current_available + inbound_qty), 0)
 
-        forecast_report.append([product_name, sku, velocity, forecast_30_qty, current_stock, inbound_qty, lead_time, forecast_need_lead_time])
+        forecast_report.append([product_name, sku, velocity, forecast_30_qty, current_available, inbound_qty, lead_time, forecast_need_lead_time])
         
         if reorder_qty > 0:
-            reorder_report.append([product_name, sku, current_stock, inbound_qty, lead_time, reorder_qty, forecast_30_qty])
+            reorder_report.append([product_name, sku, current_available, inbound_qty, lead_time, reorder_qty, forecast_30_qty])
 
     forecast_df = pd.DataFrame(forecast_report, columns=[
-        'Product', 'SKU', 'Sales Velocity', 'Forecast Sales Qty (30 Days)', 'Current Stock', 
+        'Product', 'SKU', 'Sales Velocity', 'Forecast Sales Qty (30 Days)', 'Current Available Stock', 
         'Inbound Stock', 'Lead Time (Days)', 'Forecast Inventory Need (With Lead Time)'
     ])
     
     reorder_df = pd.DataFrame(reorder_report, columns=[
-        'Product', 'SKU', 'Current Stock', 'Inbound Stock', 'Lead Time (Days)', 
+        'Product', 'SKU', 'Current Available Stock', 'Inbound Stock', 'Lead Time (Days)', 
         'Qty to Reorder Now', 'Forecast Sales Qty (30 Days)'
     ])
 
