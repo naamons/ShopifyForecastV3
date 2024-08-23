@@ -19,6 +19,9 @@ def generate_report(sales_data, inventory_data, safety_stock_days):
     # Impute lead time: Assume 30 days where lead time is missing
     inventory_data['Lead time'] = inventory_data['Lead time'].fillna(30)
 
+    # Fill missing costs with 0
+    inventory_data['Cost'] = inventory_data['Cost'].fillna(0)
+
     forecast_report = []
     reorder_report = []
     total_reorder_cost = 0  # Initialize total reorder cost
