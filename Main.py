@@ -20,6 +20,7 @@ def generate_report(sales_data, inventory_data, safety_stock_days):
 
     forecast_report = []
     reorder_report = []
+    total_reorder_cost = 0  # Initialize total reorder cost
 
     for sku in inventory_data['Part No.']:
         product_name = inventory_data.loc[inventory_data['Part No.'] == sku, 'Part description'].values[0]
@@ -31,6 +32,11 @@ def generate_report(sales_data, inventory_data, safety_stock_days):
         current_available = inventory_data.loc[inventory_data['Part No.'] == sku, 'Available'].values[0]
         inbound_qty = inventory_data.loc[inventory_data['Part No.'] == sku, 'Expected, available'].values[0]
         lead_time = inventory_data.loc[inventory_data['Part No.'] == sku, 'Lead time'].values[0]
+        cost = inventory_data.loc[inventory_data['Part No.'] == sku, 'Cost'].values[0]
+        is_procured = inventory_data.loc[inventory_data['Part No.'] == sku, 'Is procured Item'].values[0]
+
+        # Convert is_procured from 0/1 to text
+        is_procured_text = "Purchased" if is_procured == 1 else "Manufactured"
 
         # Forecasted inventory need including lead time and safety stock
         forecast_need_lead_time = round(velocity * lead_time)
@@ -38,23 +44,27 @@ def generate_report(sales_data, inventory_data, safety_stock_days):
         
         # Reorder quantity calculation including safety stock
         reorder_qty = max(forecast_30_qty + forecast_need_lead_time + safety_stock - (current_available + inbound_qty), 0)
+        reorder_cost = reorder_qty * cost
 
-        forecast_report.append([product_name, sku, round(reorder_qty), velocity, forecast_30_qty, current_available, inbound_qty, lead_time, safety_stock, forecast_need_lead_time])
+        # Add the reorder cost to the total
+        total_reorder_cost += reorder_cost
+
+        forecast_report.append([product_name, sku, round(reorder_qty), velocity, forecast_30_qty, current_available, inbound_qty, lead_time, safety_stock, forecast_need_lead_time, reorder_cost, cost, is_procured_text])
         
         if reorder_qty > 0:
-            reorder_report.append([product_name, sku, round(reorder_qty), current_available, inbound_qty, lead_time, safety_stock, forecast_30_qty])
+            reorder_report.append([product_name, sku, round(reorder_qty), current_available, inbound_qty, lead_time, safety_stock, forecast_30_qty, reorder_cost, cost, is_procured_text])
 
     forecast_df = pd.DataFrame(forecast_report, columns=[
         'Product', 'SKU', 'Qty to Reorder Now', 'Sales Velocity', 'Forecast Sales Qty (30 Days)', 'Current Available Stock', 
-        'Inbound Stock', 'Lead Time (Days)', 'Safety Stock', 'Forecast Inventory Need (With Lead Time)'
+        'Inbound Stock', 'Lead Time (Days)', 'Safety Stock', 'Forecast Inventory Need (With Lead Time)', 'Reorder Cost', 'Cost per Unit', 'Procurement Type'
     ])
     
     reorder_df = pd.DataFrame(reorder_report, columns=[
         'Product', 'SKU', 'Qty to Reorder Now', 'Current Available Stock', 'Inbound Stock', 'Lead Time (Days)', 
-        'Safety Stock', 'Forecast Sales Qty (30 Days)'
+        'Safety Stock', 'Forecast Sales Qty (30 Days)', 'Reorder Cost', 'Cost per Unit', 'Procurement Type'
     ])
 
-    # Ensure relevant columns are integers
+    # Ensure relevant columns are integers where applicable
     forecast_df[['Qty to Reorder Now', 'Forecast Sales Qty (30 Days)', 'Current Available Stock', 
                  'Inbound Stock', 'Lead Time (Days)', 'Safety Stock', 'Forecast Inventory Need (With Lead Time)']] = forecast_df[[
         'Qty to Reorder Now', 'Forecast Sales Qty (30 Days)', 'Current Available Stock', 
@@ -67,9 +77,9 @@ def generate_report(sales_data, inventory_data, safety_stock_days):
         'Safety Stock', 'Forecast Sales Qty (30 Days)'
     ]].astype(int)
 
-    return forecast_df, reorder_df
+    return forecast_df, reorder_df, total_reorder_cost
 
-def to_excel(forecast_df, reorder_df):
+def to_excel(forecast_df, reorder_df, total_reorder_cost):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         # Write forecast and reorder dataframes to separate sheets
@@ -98,6 +108,10 @@ def to_excel(forecast_df, reorder_df):
         reorder_col_index = reorder_df.columns.get_loc("Qty to Reorder Now")
         reorder_sheet.set_column(reorder_col_index, reorder_col_index, None, workbook.add_format({'bg_color': '#FFC7CE'}))
 
+        # Write the total reorder cost at the top of the Reorder sheet
+        reorder_sheet.write(0, max_col, 'Total Reorder Cost')
+        reorder_sheet.write(1, max_col, total_reorder_cost)
+
     processed_data = output.getvalue()
     return processed_data
 
@@ -111,7 +125,7 @@ sales_file = st.sidebar.file_uploader("Upload 90-Day Sales Data (CSV)", type="cs
                                       help="Upload the 'Forecast 90' Shopify report. This file should contain columns such as 'variant_sku' and 'net_quantity'.")
 
 inventory_file = st.sidebar.file_uploader("Upload Inventory Data (CSV)", type="csv",
-                                          help="Upload the inventory data file. This file should include columns such as 'Part No.', 'Available', 'Expected, available', and 'Lead time'.")
+                                          help="Upload the inventory data file. This file should include columns such as 'Part No.', 'Available', 'Expected, available', 'Cost', and 'Lead time'.")
 
 # Add a slider for safety stock
 safety_stock_days = st.sidebar.slider(
@@ -128,7 +142,7 @@ if sales_file and inventory_file:
     inventory_data = pd.read_csv(inventory_file)
     
     if st.sidebar.button("Generate Reorder Report"):
-        forecast_df, reorder_df = generate_report(sales_data, inventory_data, safety_stock_days)
+        forecast_df, reorder_df, total_reorder_cost = generate_report(sales_data, inventory_data, safety_stock_days)
         
         if forecast_df is not None and reorder_df is not None:
             st.subheader("Forecast Report")
@@ -137,7 +151,10 @@ if sales_file and inventory_file:
             st.subheader("Reorder Report")
             st.dataframe(reorder_df)
             
-            excel_data = to_excel(forecast_df, reorder_df)
+            # Display total reorder cost at the top of the report
+            st.write(f"**Total Reorder Cost:** ${total_reorder_cost:,.2f}")
+            
+            excel_data = to_excel(forecast_df, reorder_df, total_reorder_cost)
             st.download_button(
                 label="Download Report as Excel",
                 data=excel_data,
