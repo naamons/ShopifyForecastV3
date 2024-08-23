@@ -22,6 +22,12 @@ def generate_report(sales_data, inventory_data, safety_stock_days):
     reorder_report = []
     total_reorder_cost = 0  # Initialize total reorder cost
 
+    # Convert "Is procured item" from 0/1 to text
+    if 'Is procured item' in inventory_data.columns:
+        inventory_data['Procurement Type'] = inventory_data['Is procured item'].apply(lambda x: 'Purchased' if x == 1 else 'Manufactured')
+    else:
+        inventory_data['Procurement Type'] = 'Unknown'
+
     for sku in inventory_data['Part No.']:
         product_name = inventory_data.loc[inventory_data['Part No.'] == sku, 'Part description'].values[0]
         velocity = sales_velocity.get(sku, 0)
@@ -33,10 +39,7 @@ def generate_report(sales_data, inventory_data, safety_stock_days):
         inbound_qty = inventory_data.loc[inventory_data['Part No.'] == sku, 'Expected, available'].values[0]
         lead_time = inventory_data.loc[inventory_data['Part No.'] == sku, 'Lead time'].values[0]
         cost = inventory_data.loc[inventory_data['Part No.'] == sku, 'Cost'].values[0]
-        is_procured = inventory_data.loc[inventory_data['Part No.'] == sku, 'Is procured Item'].values[0]
-
-        # Convert is_procured from 0/1 to text
-        is_procured_text = "Purchased" if is_procured == 1 else "Manufactured"
+        is_procured_text = inventory_data.loc[inventory_data['Part No.'] == sku, 'Procurement Type'].values[0]
 
         # Forecasted inventory need including lead time and safety stock
         forecast_need_lead_time = round(velocity * lead_time)
