@@ -24,7 +24,12 @@ def generate_report(sales_data, inventory_data, safety_stock_days):
     for sku in inventory_data['Part No.']:
         product_name = inventory_data.loc[inventory_data['Part No.'] == sku, 'Part description'].values[0]
         velocity = sales_velocity.get(sku, 0)
+        
+        # Debug output to check the values
+        print(f"Processing SKU: {sku}, Velocity: {velocity}")
+        
         if velocity <= 0:
+            print(f"Skipping SKU: {sku} due to zero or negative velocity.")
             continue  # Skip SKUs with no sales activity
         
         forecast_30_qty = round(forecast_30.get(sku, 0))
