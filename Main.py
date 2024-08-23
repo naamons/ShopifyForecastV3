@@ -25,11 +25,11 @@ def generate_report(sales_data, inventory_data, safety_stock_days):
         product_name = inventory_data.loc[inventory_data['Part No.'] == sku, 'Part description'].values[0]
         velocity = sales_velocity.get(sku, 0)
         
-        # Debug output to check the values
-        print(f"Processing SKU: {sku}, Velocity: {velocity}")
+        # Use st.write instead of print for debugging
+        st.text(f"Processing SKU: {sku}, Velocity: {velocity}")
         
         if velocity <= 0:
-            print(f"Skipping SKU: {sku} due to zero or negative velocity.")
+            st.text(f"Skipping SKU: {sku} due to zero or negative velocity.")
             continue  # Skip SKUs with no sales activity
         
         forecast_30_qty = round(forecast_30.get(sku, 0))
@@ -58,19 +58,6 @@ def generate_report(sales_data, inventory_data, safety_stock_days):
         'Product', 'SKU', 'Qty to Reorder Now', 'Current Available Stock', 'Inbound Stock', 'Lead Time (Days)', 
         'Safety Stock', 'Forecast Sales Qty (30 Days)'
     ])
-
-    # Ensure relevant columns are integers
-    forecast_df[['Qty to Reorder Now', 'Forecast Sales Qty (30 Days)', 'Current Available Stock', 
-                 'Inbound Stock', 'Lead Time (Days)', 'Safety Stock', 'Forecast Inventory Need (With Lead Time)']] = forecast_df[[
-        'Qty to Reorder Now', 'Forecast Sales Qty (30 Days)', 'Current Available Stock', 
-        'Inbound Stock', 'Lead Time (Days)', 'Safety Stock', 'Forecast Inventory Need (With Lead Time)'
-    ]].astype(int)
-
-    reorder_df[['Qty to Reorder Now', 'Current Available Stock', 'Inbound Stock', 'Lead Time (Days)', 
-                'Safety Stock', 'Forecast Sales Qty (30 Days)']] = reorder_df[[
-        'Qty to Reorder Now', 'Current Available Stock', 'Inbound Stock', 'Lead Time (Days)', 
-        'Safety Stock', 'Forecast Sales Qty (30 Days)'
-    ]].astype(int)
 
     return forecast_df, reorder_df
 
