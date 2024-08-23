@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from io import BytesIO
+import logging
 
 def calculate_sales_velocity_90days(sales_data):
     sales_data['Total Quantity'] = sales_data['net_quantity']
@@ -83,6 +84,22 @@ def generate_report(sales_data, inventory_data, safety_stock_days):
     return forecast_df, reorder_df, total_reorder_cost
 
 def to_excel(forecast_df, reorder_df, total_reorder_cost):
+    # Set up basic logging
+    logging.basicConfig(level=logging.INFO)
+
+    # Ensure total_reorder_cost is a number (float or int)
+    if total_reorder_cost is None or (isinstance(total_reorder_cost, float) and np.isnan(total_reorder_cost)):
+        logging.warning("Total reorder cost is None or NaN. Defaulting to 0.0")
+        total_reorder_cost = 0.0  # Default to 0 if None or NaN
+    elif not isinstance(total_reorder_cost, (int, float)):
+        try:
+            total_reorder_cost = float(total_reorder_cost)
+        except ValueError:
+            logging.error(f"Unable to convert total_reorder_cost to float. Value: {total_reorder_cost}")
+            total_reorder_cost = 0.0  # Default to 0 if conversion fails
+    
+    logging.info(f"Total Reorder Cost: {total_reorder_cost}")
+
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         # Write forecast and reorder dataframes to separate sheets
