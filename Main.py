@@ -16,34 +16,37 @@ def generate_report(sales_data, inventory_data, safety_stock_days):
     sales_velocity = calculate_sales_velocity_90days(sales_data)
     forecast_30 = generate_forecast(sales_velocity, 30)
 
+    # Filter out discontinued items
+    active_inventory = inventory_data[inventory_data['Group name'] != 'Discontinued']
+
     # Impute lead time: Assume 30 days where lead time is missing
-    inventory_data['Lead time'] = inventory_data['Lead time'].fillna(30)
+    active_inventory['Lead time'] = active_inventory['Lead time'].fillna(30)
 
     # Fill missing costs with 0
-    inventory_data['Cost'] = inventory_data['Cost'].fillna(0)
+    active_inventory['Cost'] = active_inventory['Cost'].fillna(0)
 
     forecast_report = []
     reorder_report = []
     total_reorder_cost = 0  # Initialize total reorder cost
 
     # Convert "Is procured item" from 0/1 to text
-    if 'Is procured item' in inventory_data.columns:
-        inventory_data['Procurement Type'] = inventory_data['Is procured item'].apply(lambda x: 'Purchased' if x == 1 else 'Manufactured')
+    if 'Is procured item' in active_inventory.columns:
+        active_inventory['Procurement Type'] = active_inventory['Is procured item'].apply(lambda x: 'Purchased' if x == 1 else 'Manufactured')
     else:
-        inventory_data['Procurement Type'] = 'Unknown'
+        active_inventory['Procurement Type'] = 'Unknown'
 
-    for sku in inventory_data['Part No.']:
-        product_name = inventory_data.loc[inventory_data['Part No.'] == sku, 'Part description'].values[0]
+    for sku in active_inventory['Part No.']:
+        product_name = active_inventory.loc[active_inventory['Part No.'] == sku, 'Part description'].values[0]
         velocity = sales_velocity.get(sku, 0)
         if velocity <= 0:
             continue  # Skip SKUs with no sales activity
         
         forecast_30_qty = round(forecast_30.get(sku, 0))
-        current_available = inventory_data.loc[inventory_data['Part No.'] == sku, 'Available'].values[0]
-        inbound_qty = inventory_data.loc[inventory_data['Part No.'] == sku, 'Expected, available'].values[0]
-        lead_time = inventory_data.loc[inventory_data['Part No.'] == sku, 'Lead time'].values[0]
-        cost = inventory_data.loc[inventory_data['Part No.'] == sku, 'Cost'].values[0]
-        is_procured_text = inventory_data.loc[inventory_data['Part No.'] == sku, 'Procurement Type'].values[0]
+        current_available = active_inventory.loc[active_inventory['Part No.'] == sku, 'Available'].values[0]
+        inbound_qty = active_inventory.loc[active_inventory['Part No.'] == sku, 'Expected, available'].values[0]
+        lead_time = active_inventory.loc[active_inventory['Part No.'] == sku, 'Lead time'].values[0]
+        cost = active_inventory.loc[active_inventory['Part No.'] == sku, 'Cost'].values[0]
+        is_procured_text = active_inventory.loc[active_inventory['Part No.'] == sku, 'Procurement Type'].values[0]
 
         # Forecasted inventory need including lead time and safety stock
         forecast_need_lead_time = round(velocity * lead_time)
@@ -148,7 +151,7 @@ sales_file = st.sidebar.file_uploader("Upload 90-Day Sales Data (CSV)", type="cs
                                       help="Upload the 'Forecast 90' Shopify report. This file should contain columns such as 'variant_sku' and 'net_quantity'.")
 
 inventory_file = st.sidebar.file_uploader("Upload Inventory Data (CSV)", type="csv",
-                                          help="Upload the inventory data file. This file should include columns such as 'Part No.', 'Available', 'Expected, available', 'Cost', and 'Lead time'.")
+                                          help="Upload the inventory data file. This file should include columns such as 'Part No.', 'Available', 'Expected, available', 'Cost', 'Lead time', and 'Group name'.")
 
 # Add a slider for safety stock
 safety_stock_days = st.sidebar.slider(
