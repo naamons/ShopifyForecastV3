@@ -12,6 +12,22 @@ def calculate_sales_velocity_90days(sales_data):
 def generate_forecast(sales_velocity, days=30):
     return sales_velocity * days  # Forecasting based on current velocity
 
+def generate_procurement_schedule(sales_velocity, months=6):
+    # Generate procurement forecast for each of the next 6 months
+    monthly_forecast = {f'Month {i+1}': sales_velocity * 30 for i in range(months)}
+    return monthly_forecast
+
+def calculate_priority(current_available, forecast_next_month, lead_time):
+    if lead_time == 0:
+        return 0  # Avoid division by zero
+    priority_score = (forecast_next_month - current_available) / lead_time
+    return priority_score
+
+def calculate_lost_revenue(forecasted_demand, available_stock, price_per_unit):
+    lost_units = max(forecasted_demand - available_stock, 0)
+    lost_revenue = lost_units * price_per_unit
+    return lost_revenue
+
 def generate_report(sales_data, inventory_data, safety_stock_days):
     sales_velocity = calculate_sales_velocity_90days(sales_data)
     forecast_30 = generate_forecast(sales_velocity, 30)
@@ -46,6 +62,7 @@ def generate_report(sales_data, inventory_data, safety_stock_days):
         inbound_qty = active_inventory.loc[active_inventory['Part No.'] == sku, 'Expected, available'].values[0]
         lead_time = active_inventory.loc[active_inventory['Part No.'] == sku, 'Lead time'].values[0]
         cost = active_inventory.loc[active_inventory['Part No.'] == sku, 'Cost'].values[0]
+        price_per_unit = active_inventory.loc[active_inventory['Part No.'] == sku, 'Price'].values[0]  # Assuming 'Price' column
         is_procured_text = active_inventory.loc[active_inventory['Part No.'] == sku, 'Procurement Type'].values[0]
 
         # Forecasted inventory need including lead time and safety stock
@@ -59,19 +76,39 @@ def generate_report(sales_data, inventory_data, safety_stock_days):
         # Add the reorder cost to the total
         total_reorder_cost += reorder_cost
 
-        forecast_report.append([product_name, sku, round(reorder_qty), velocity, forecast_30_qty, current_available, inbound_qty, lead_time, safety_stock, forecast_need_lead_time, reorder_cost, cost, is_procured_text])
+        # Calculate procurement forecast for the next 6 months
+        monthly_forecast = generate_procurement_schedule(velocity)
+
+        # Calculate priority score
+        priority_score = calculate_priority(current_available, forecast_30_qty, lead_time)
+
+        # Calculate potential lost revenue
+        lost_revenue = calculate_lost_revenue(forecast_30_qty, current_available + inbound_qty, price_per_unit)
+
+        # Append to forecast report
+        forecast_report.append([product_name, sku, round(reorder_qty), velocity, forecast_30_qty, current_available, 
+                                inbound_qty, lead_time, safety_stock, forecast_need_lead_time, reorder_cost, 
+                                cost, is_procured_text, priority_score, lost_revenue, 
+                                monthly_forecast['Month 1'], monthly_forecast['Month 2'], monthly_forecast['Month 3'],
+                                monthly_forecast['Month 4'], monthly_forecast['Month 5'], monthly_forecast['Month 6']])
         
         if reorder_qty > 0:
-            reorder_report.append([product_name, sku, round(reorder_qty), current_available, inbound_qty, lead_time, safety_stock, forecast_30_qty, reorder_cost, cost, is_procured_text])
+            reorder_report.append([product_name, sku, round(reorder_qty), current_available, inbound_qty, 
+                                   lead_time, safety_stock, forecast_30_qty, reorder_cost, cost, 
+                                   is_procured_text, priority_score, lost_revenue])
 
     forecast_df = pd.DataFrame(forecast_report, columns=[
-        'Product', 'SKU', 'Qty to Reorder Now', 'Sales Velocity', 'Forecast Sales Qty (30 Days)', 'Current Available Stock', 
-        'Inbound Stock', 'Lead Time (Days)', 'Safety Stock', 'Forecast Inventory Need (With Lead Time)', 'Reorder Cost', 'Cost per Unit', 'Procurement Type'
+        'Product', 'SKU', 'Qty to Reorder Now', 'Sales Velocity', 'Forecast Sales Qty (30 Days)', 
+        'Current Available Stock', 'Inbound Stock', 'Lead Time (Days)', 'Safety Stock', 
+        'Forecast Inventory Need (With Lead Time)', 'Reorder Cost', 'Cost per Unit', 
+        'Procurement Type', 'Priority Score', 'Lost Revenue', 'Month 1 Forecast', 
+        'Month 2 Forecast', 'Month 3 Forecast', 'Month 4 Forecast', 'Month 5 Forecast', 'Month 6 Forecast'
     ])
     
     reorder_df = pd.DataFrame(reorder_report, columns=[
         'Product', 'SKU', 'Qty to Reorder Now', 'Current Available Stock', 'Inbound Stock', 'Lead Time (Days)', 
-        'Safety Stock', 'Forecast Sales Qty (30 Days)', 'Reorder Cost', 'Cost per Unit', 'Procurement Type'
+        'Safety Stock', 'Forecast Sales Qty (30 Days)', 'Reorder Cost', 'Cost per Unit', 
+        'Procurement Type', 'Priority Score', 'Lost Revenue'
     ])
 
     # Ensure relevant columns are integers where applicable
