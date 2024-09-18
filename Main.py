@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from io import BytesIO
 import logging
+from datetime import datetime
 
 def calculate_sales_velocity_90days(sales_data):
     sales_data['Total Quantity'] = sales_data['net_quantity']
@@ -142,9 +143,12 @@ def to_excel(forecast_df, reorder_df, total_reorder_cost):
     return processed_data
 
 # Streamlit app
-st.title("Reorder Report Generator (90 Days Sales)")
+st.title("Inventory Management System")
 
-# Add tooltips to provide guidance on file uploads
+# Add tabs
+tabs = st.tabs(["Reorder Report", "Master Procurement Schedule"])
+
+# Common file uploaders for both tabs
 st.sidebar.header("Upload Data")
 
 sales_file = st.sidebar.file_uploader("Upload 90-Day Sales Data (CSV)", type="csv",
@@ -162,30 +166,139 @@ safety_stock_days = st.sidebar.slider(
     help="Adjust the safety stock buffer. The default is 7 days."
 )
 
-# Logic to handle file uploads and report generation
-if sales_file and inventory_file:
-    sales_data = pd.read_csv(sales_file)
-    inventory_data = pd.read_csv(inventory_file)
-    
-    if st.sidebar.button("Generate Reorder Report"):
-        forecast_df, reorder_df, total_reorder_cost = generate_report(sales_data, inventory_data, safety_stock_days)
+# Tab 1: Reorder Report (existing functionality)
+with tabs[0]:
+    st.header("Reorder Report Generator (90 Days Sales)")
+    if sales_file and inventory_file:
+        sales_data = pd.read_csv(sales_file)
+        inventory_data = pd.read_csv(inventory_file)
         
-        if forecast_df is not None and reorder_df is not None:
-            st.subheader("Forecast Report")
-            st.dataframe(forecast_df)
+        if st.sidebar.button("Generate Reorder Report"):
+            forecast_df, reorder_df, total_reorder_cost = generate_report(sales_data, inventory_data, safety_stock_days)
             
-            st.subheader("Reorder Report")
-            st.dataframe(reorder_df)
-            
-            # Display total reorder cost at the top of the report
-            st.write(f"**Total Reorder Cost:** ${total_reorder_cost:,.2f}")
-            
-            excel_data = to_excel(forecast_df, reorder_df, total_reorder_cost)
-            st.download_button(
-                label="Download Report as Excel",
-                data=excel_data,
-                file_name='Reorder_Report.xlsx',
-                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            )
-else:
-    st.sidebar.warning("Please upload both 90-Day Sales and Inventory CSV files to proceed.")
+            if forecast_df is not None and reorder_df is not None:
+                st.subheader("Forecast Report")
+                st.dataframe(forecast_df)
+                
+                st.subheader("Reorder Report")
+                st.dataframe(reorder_df)
+                
+                # Display total reorder cost at the top of the report
+                st.write(f"**Total Reorder Cost:** ${total_reorder_cost:,.2f}")
+                
+                excel_data = to_excel(forecast_df, reorder_df, total_reorder_cost)
+                st.download_button(
+                    label="Download Report as Excel",
+                    data=excel_data,
+                    file_name='Reorder_Report.xlsx',
+                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                )
+    else:
+        st.warning("Please upload both 90-Day Sales and Inventory CSV files to proceed.")
+
+# Tab 2: Master Procurement Schedule
+with tabs[1]:
+    st.header("Master Procurement Schedule (MPS)")
+    if sales_file and inventory_file:
+        sales_data = pd.read_csv(sales_file)
+        inventory_data = pd.read_csv(inventory_file)
+        
+        # Filter out discontinued items
+        active_inventory = inventory_data[inventory_data['Group name'] != 'Discontinued']
+        
+        # Convert "Is procured item" from 0/1 to text
+        if 'Is procured item' in active_inventory.columns:
+            active_inventory['Procurement Type'] = active_inventory['Is procured item'].apply(lambda x: 'Purchased' if x == 1 else 'Manufactured')
+        else:
+            active_inventory['Procurement Type'] = 'Unknown'
+        
+        # Filter to include only procured items
+        procured_inventory = active_inventory[active_inventory['Procurement Type'] == 'Purchased']
+        
+        # Calculate sales velocity
+        sales_velocity = calculate_sales_velocity_90days(sales_data)
+        
+        # Generate list of months and days
+        from datetime import datetime
+
+        # Get current date
+        current_date = datetime.now()
+
+        # Generate list of months for the next 6 months
+        months = pd.date_range(current_date, periods=6, freq='MS').to_pydatetime().tolist()
+
+        # For each month, get the month name and year
+        month_names = [month.strftime("%B %Y") for month in months]
+
+        # For each month, get the number of days in the month
+        number_of_days_in_month = [pd.Period(month.strftime("%Y-%m")).days_in_month for month in months]
+        
+        # Prepare the MPS dataframe
+        mps_df = procured_inventory[['Part description', 'Part No.', 'Available']].copy()
+        mps_df.rename(columns={'Part description': 'Product', 'Part No.': 'SKU', 'Available': 'Current Available Stock'}, inplace=True)
+        
+        for i, month_name in enumerate(month_names):
+            days_in_month = number_of_days_in_month[i]
+            mps_df[month_name] = mps_df['SKU'].apply(lambda sku: round(sales_velocity.get(sku, 0) * days_in_month))
+        
+        # Allow users to adjust the demand
+        st.subheader("Forecasted Demand (Editable)")
+        editable_mps_df = st.data_editor(mps_df)
+        
+        # Calculate total adjusted demand over next 6 months
+        editable_mps_df['Total Demand'] = editable_mps_df[month_names].sum(axis=1)
+        
+        # Determine stock status
+        editable_mps_df['Status'] = editable_mps_df.apply(
+            lambda row: 'Good' if row['Total Demand'] <= row['Current Available Stock'] else 'Bad', axis=1
+        )
+        
+        # Display the adjusted demand with status
+        st.subheader("Adjusted Demand with Total and Status")
+        st.write(editable_mps_df.style.apply(
+            lambda x: ['background-color: lightgreen' if v == 'Good' else 'background-color: pink' for v in x['Status']], axis=1
+        ))
+        
+        # Allow download to Excel
+        def mps_to_excel(df):
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df.to_excel(writer, index=False, sheet_name='MPS')
+                
+                # Get the xlsxwriter workbook and worksheet objects.
+                workbook  = writer.book
+                worksheet = writer.sheets['MPS']
+                
+                # Format the columns.
+                format1 = workbook.add_format({'num_format': '#,##0'})
+                worksheet.set_column(0, len(df.columns)-1, 15, format1)
+                
+                # Apply conditional formatting to 'Status' column
+                status_col = df.columns.get_loc('Status')
+                worksheet.conditional_format(1, status_col, len(df), status_col, {
+                    'type':     'text',
+                    'criteria': 'containing',
+                    'value':    'Good',
+                    'format':   workbook.add_format({'bg_color': '#C6EFCE', 'font_color': '#006100'})
+                })
+                worksheet.conditional_format(1, status_col, len(df), status_col, {
+                    'type':     'text',
+                    'criteria': 'containing',
+                    'value':    'Bad',
+                    'format':   workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
+                })
+                
+            processed_data = output.getvalue()
+            return processed_data
+        
+        excel_data = mps_to_excel(editable_mps_df)
+        
+        st.download_button(
+            label="Download MPS as Excel",
+            data=excel_data,
+            file_name='MPS.xlsx',
+            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        
+    else:
+        st.warning("Please upload both 90-Day Sales and Inventory CSV files to proceed.")
