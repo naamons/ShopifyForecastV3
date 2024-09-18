@@ -166,13 +166,23 @@ safety_stock_days = st.sidebar.slider(
     help="Adjust the safety stock buffer. The default is 7 days."
 )
 
+# Read the uploaded files into DataFrames once
+if sales_file and inventory_file:
+    # Reset file pointers before reading (optional but good practice)
+    sales_file.seek(0)
+    inventory_file.seek(0)
+    
+    # Read the files
+    sales_data = pd.read_csv(sales_file)
+    inventory_data = pd.read_csv(inventory_file)
+else:
+    sales_data = None
+    inventory_data = None
+
 # Tab 1: Reorder Report (existing functionality)
 with tabs[0]:
     st.header("Reorder Report Generator (90 Days Sales)")
-    if sales_file and inventory_file:
-        sales_data = pd.read_csv(sales_file)
-        inventory_data = pd.read_csv(inventory_file)
-        
+    if sales_data is not None and inventory_data is not None:
         if st.sidebar.button("Generate Reorder Report"):
             forecast_df, reorder_df, total_reorder_cost = generate_report(sales_data, inventory_data, safety_stock_days)
             
@@ -199,10 +209,7 @@ with tabs[0]:
 # Tab 2: Master Procurement Schedule
 with tabs[1]:
     st.header("Master Procurement Schedule (MPS)")
-    if sales_file and inventory_file:
-        sales_data = pd.read_csv(sales_file)
-        inventory_data = pd.read_csv(inventory_file)
-        
+    if sales_data is not None and inventory_data is not None:
         # Filter out discontinued items
         active_inventory = inventory_data[inventory_data['Group name'] != 'Discontinued']
         
@@ -244,7 +251,7 @@ with tabs[1]:
         # Allow users to adjust the demand
         st.subheader("Forecasted Demand (Editable)")
         editable_mps_df = st.data_editor(mps_df)
-        
+
         # Calculate total adjusted demand over next 6 months
         editable_mps_df['Total Demand'] = editable_mps_df[month_names].sum(axis=1)
         
