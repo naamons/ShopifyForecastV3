@@ -256,7 +256,7 @@ with tabs[1]:
                 days_in_month = number_of_days_in_month[i]
                 mps_df[month_name] = mps_df['SKU'].apply(lambda sku: round(sales_velocity.get(sku, 0) * days_in_month))
             
-            # Store mps_df in session state
+            # Store mps_df and other variables in session state
             st.session_state.mps_df = mps_df
             st.session_state.month_names = month_names
             st.session_state.procured_inventory = procured_inventory
@@ -298,77 +298,80 @@ with tabs[1]:
         # Reset index to avoid any issues
         mps_df.reset_index(drop=True, inplace=True)
 
-        # Allow users to adjust the demand
         st.subheader("Forecasted Demand (Editable)")
-        editable_mps_df = st.data_editor(mps_df, key='mps_editor')
 
-        # Update mps_df in session state with edited data
-        st.session_state.mps_df = editable_mps_df
+        # Use st.form to prevent automatic updates
+        with st.form("mps_form"):
+            editable_mps_df = st.data_editor(mps_df, key='mps_editor')
+            recalculate = st.form_submit_button("Recalculate")
 
-        # Calculate total adjusted demand over next 6 months
-        editable_mps_df['Total Demand'] = editable_mps_df[month_names].sum(axis=1)
+        if recalculate:
+            # Update mps_df in session state with edited data
+            st.session_state.mps_df = editable_mps_df
 
-        # Calculate "How Many to Purchase" for each month based on lead time
-        # Calculate LeadTimeMonths
-        editable_mps_df['LeadTimeMonths'] = editable_mps_df['Lead Time (Days)'].apply(lambda x: math.ceil(x / 30))
+            # Calculate total adjusted demand over next 6 months
+            editable_mps_df['Total Demand'] = editable_mps_df[month_names].sum(axis=1)
 
-        # Initialize Purchase Qty columns
-        for month_name in month_names:
-            editable_mps_df[f'Purchase Qty {month_name}'] = 0
+            # Calculate "How Many to Purchase" for each month based on lead time
+            # Calculate LeadTimeMonths
+            editable_mps_df['LeadTimeMonths'] = editable_mps_df['Lead Time (Days)'].apply(lambda x: math.ceil(x / 30))
 
-        # For each SKU, calculate Purchase Qty per month
-        for idx, row in editable_mps_df.iterrows():
-            lead_time_months = int(row['LeadTimeMonths'])
-            current_available_stock = row['Current Available Stock']
-            cumulative_demand = 0
-            for i, month_name in enumerate(month_names):
-                demand_qty = row[month_name]
-                cumulative_demand += demand_qty
-                purchase_month_index = i - lead_time_months
-                if purchase_month_index >= 0:
-                    purchase_month_name = month_names[purchase_month_index]
-                    # Accumulate purchase quantities
-                    existing_qty = editable_mps_df.at[idx, f'Purchase Qty {purchase_month_name}']
-                    editable_mps_df.at[idx, f'Purchase Qty {purchase_month_name}'] = existing_qty + demand_qty
-                else:
-                    # Need to purchase in the first month
-                    existing_qty = editable_mps_df.at[idx, f'Purchase Qty {month_names[0]}']
-                    editable_mps_df.at[idx, f'Purchase Qty {month_names[0]}'] = existing_qty + demand_qty
+            # Initialize Purchase Qty columns
+            for month_name in month_names:
+                editable_mps_df[f'Purchase Qty {month_name}'] = 0
 
-            # Adjust Purchase Qty in first month for current available stock
-            first_month_purchase_qty = editable_mps_df.at[idx, f'Purchase Qty {month_names[0]}']
-            adjusted_purchase_qty = max(first_month_purchase_qty - current_available_stock, 0)
-            editable_mps_df.at[idx, f'Purchase Qty {month_names[0]}'] = adjusted_purchase_qty
+            # For each SKU, calculate Purchase Qty per month
+            for idx, row in editable_mps_df.iterrows():
+                lead_time_months = int(row['LeadTimeMonths'])
+                current_available_stock = row['Current Available Stock']
+                cumulative_demand = 0
+                for i, month_name in enumerate(month_names):
+                    demand_qty = row[month_name]
+                    cumulative_demand += demand_qty
+                    purchase_month_index = i - lead_time_months
+                    if purchase_month_index >= 0:
+                        purchase_month_name = month_names[purchase_month_index]
+                        # Accumulate purchase quantities
+                        existing_qty = editable_mps_df.at[idx, f'Purchase Qty {purchase_month_name}']
+                        editable_mps_df.at[idx, f'Purchase Qty {purchase_month_name}'] = existing_qty + demand_qty
+                    else:
+                        # Need to purchase in the first month
+                        existing_qty = editable_mps_df.at[idx, f'Purchase Qty {month_names[0]}']
+                        editable_mps_df.at[idx, f'Purchase Qty {month_names[0]}'] = existing_qty + demand_qty
 
-        # Display the adjusted demand with "How Many to Purchase" columns
-        st.subheader("Adjusted Demand with Purchase Quantities")
-        st.write(editable_mps_df)
+                # Adjust Purchase Qty in first month for current available stock
+                first_month_purchase_qty = editable_mps_df.at[idx, f'Purchase Qty {month_names[0]}']
+                adjusted_purchase_qty = max(first_month_purchase_qty - current_available_stock, 0)
+                editable_mps_df.at[idx, f'Purchase Qty {month_names[0]}'] = adjusted_purchase_qty
 
-        # Allow download to Excel
-        def mps_to_excel(df):
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df.to_excel(writer, index=False, sheet_name='MPS')
-                
-                # Get the xlsxwriter workbook and worksheet objects.
-                workbook = writer.book
-                worksheet = writer.sheets['MPS']
-                
-                # Format the columns.
-                format1 = workbook.add_format({'num_format': '#,##0'})
-                worksheet.set_column(0, len(df.columns)-1, 15, format1)
-                
-            processed_data = output.getvalue()
-            return processed_data
+            # Display the adjusted demand with "How Many to Purchase" columns
+            st.subheader("Adjusted Demand with Purchase Quantities")
+            st.write(editable_mps_df)
 
-        excel_data = mps_to_excel(editable_mps_df)
-        
-        st.download_button(
-            label="Download MPS as Excel",
-            data=excel_data,
-            file_name='MPS.xlsx',
-            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        )
-        
+            # Allow download to Excel
+            def mps_to_excel(df):
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    df.to_excel(writer, index=False, sheet_name='MPS')
+                    
+                    # Get the xlsxwriter workbook and worksheet objects.
+                    workbook = writer.book
+                    worksheet = writer.sheets['MPS']
+                    
+                    # Format the columns.
+                    format1 = workbook.add_format({'num_format': '#,##0'})
+                    worksheet.set_column(0, len(df.columns)-1, 15, format1)
+                    
+                processed_data = output.getvalue()
+                return processed_data
+
+            excel_data = mps_to_excel(editable_mps_df)
+            
+            st.download_button(
+                label="Download MPS as Excel",
+                data=excel_data,
+                file_name='MPS.xlsx',
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            )
     else:
         st.warning("Please upload both 90-Day Sales and Inventory CSV files to proceed.")
