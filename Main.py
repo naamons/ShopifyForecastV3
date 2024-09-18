@@ -274,11 +274,11 @@ def highlight_row(row):
 st.write(editable_mps_df.style.apply(highlight_row, axis=1))
 
         
-        # Allow download to Excel
-        def mps_to_excel(df):
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df.to_excel(writer, index=False, sheet_name='MPS')
+# Allow download to Excel
+def mps_to_excel(df):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='MPS')
                 
                 # Get the xlsxwriter workbook and worksheet objects.
                 workbook  = writer.book
