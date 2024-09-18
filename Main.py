@@ -278,8 +278,9 @@ with tabs[1]:
                 # Initialize demand to 0 for all months
                 for month_name in month_names:
                     new_row[month_name] = 0
-                # Append the new row to mps_df
-                mps_df = mps_df.append(new_row, ignore_index=True)
+                # Append the new row to mps_df using pd.concat()
+                new_row_df = pd.DataFrame([new_row])
+                mps_df = pd.concat([mps_df, new_row_df], ignore_index=True)
         
         # Reset index to avoid any issues
         mps_df.reset_index(drop=True, inplace=True)
