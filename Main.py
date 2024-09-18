@@ -5,6 +5,7 @@ from io import BytesIO
 import logging
 from datetime import datetime
 import math
+from st_aggrid import AgGrid, GridOptionsBuilder, DataReturnMode, GridUpdateMode
 
 def calculate_sales_velocity_90days(sales_data):
     sales_data['Total Quantity'] = sales_data['net_quantity']
@@ -310,12 +311,39 @@ with tabs[1]:
 
         # Use st.form to prevent automatic updates
         with st.form("mps_form"):
-            editable_mps_df = st.data_editor(mps_df, key='mps_editor')
+            # Configure AgGrid options
+            gb = GridOptionsBuilder.from_dataframe(mps_df)
+            gb.configure_default_column(editable=True, resizable=True)
+            # Freeze 'Product' and 'SKU' columns
+            gb.configure_columns(['Product', 'SKU'], pinned='left')
+            grid_options = gb.build()
+
+            grid_response = AgGrid(
+                mps_df,
+                gridOptions=grid_options,
+                height=400,
+                width='100%',
+                data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+                update_mode=GridUpdateMode.MODEL_CHANGED,
+                allow_unsafe_jscode=True,
+                enable_enterprise_modules=False,
+                fit_columns_on_grid_load=False
+            )
+
             recalculate = st.form_submit_button("Recalculate")
 
         if recalculate:
+            # Get the edited DataFrame
+            editable_mps_df = grid_response['data']
+
             # Update mps_df in session state with edited data
             st.session_state.mps_df = editable_mps_df
+
+            # Convert necessary columns to appropriate data types
+            editable_mps_df[month_names] = editable_mps_df[month_names].apply(pd.to_numeric, errors='coerce').fillna(0).astype(int)
+            editable_mps_df['Current Available Stock'] = editable_mps_df['Current Available Stock'].astype(int)
+            editable_mps_df['Inbound Stock'] = editable_mps_df['Inbound Stock'].astype(int)
+            editable_mps_df['Lead Time (Days)'] = editable_mps_df['Lead Time (Days)'].astype(int)
 
             # Calculate total adjusted demand over next 6 months
             editable_mps_df['Total Demand'] = editable_mps_df[month_names].sum(axis=1)
