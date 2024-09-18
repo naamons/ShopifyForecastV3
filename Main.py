@@ -230,8 +230,15 @@ with tabs[1]:
             procured_inventory_with_demand = procured_inventory[procured_inventory['Part No.'].isin(skus_with_demand)]
             
             # Prepare the MPS dataframe
-            mps_df = procured_inventory_with_demand[['Part description', 'Part No.', 'Available', 'Lead time']].copy()
-            mps_df.rename(columns={'Product description': 'Product', 'Part description': 'Product', 'Part No.': 'SKU', 'Available': 'Current Available Stock', 'Lead time': 'Lead Time (Days)'}, inplace=True)
+            mps_df = procured_inventory_with_demand[['Part description', 'Part No.', 'Available', 'Expected, available', 'Lead time']].copy()
+            mps_df.rename(columns={
+                'Product description': 'Product',
+                'Part description': 'Product',
+                'Part No.': 'SKU',
+                'Available': 'Current Available Stock',
+                'Expected, available': 'Inbound Stock',
+                'Lead time': 'Lead Time (Days)'
+            }, inplace=True)
             
             # Convert Lead Time to integer
             mps_df['Lead Time (Days)'] = mps_df['Lead Time (Days)'].fillna(30).astype(int)
@@ -284,6 +291,7 @@ with tabs[1]:
                     'Product': product_info['Product'],
                     'SKU': sku,
                     'Current Available Stock': product_row.get('Available', 0),
+                    'Inbound Stock': product_row.get('Expected, available', 0),
                     'Lead Time (Days)': int(product_row.get('Lead time', 30))
                 }
                 # Initialize demand to 0 for all months
@@ -312,7 +320,6 @@ with tabs[1]:
             # Calculate total adjusted demand over next 6 months
             editable_mps_df['Total Demand'] = editable_mps_df[month_names].sum(axis=1)
 
-            # Calculate "How Many to Purchase" for each month based on lead time
             # Calculate LeadTimeMonths
             editable_mps_df['LeadTimeMonths'] = editable_mps_df['Lead Time (Days)'].apply(lambda x: math.ceil(x / 30))
 
@@ -324,6 +331,8 @@ with tabs[1]:
             for idx, row in editable_mps_df.iterrows():
                 lead_time_months = int(row['LeadTimeMonths'])
                 current_available_stock = row['Current Available Stock']
+                inbound_stock = row.get('Inbound Stock', 0)
+                total_available_stock = current_available_stock + inbound_stock
                 cumulative_demand = 0
                 for i, month_name in enumerate(month_names):
                     demand_qty = row[month_name]
@@ -339,9 +348,9 @@ with tabs[1]:
                         existing_qty = editable_mps_df.at[idx, f'Purchase Qty {month_names[0]}']
                         editable_mps_df.at[idx, f'Purchase Qty {month_names[0]}'] = existing_qty + demand_qty
 
-                # Adjust Purchase Qty in first month for current available stock
+                # Adjust Purchase Qty in first month for current available stock and inbound stock
                 first_month_purchase_qty = editable_mps_df.at[idx, f'Purchase Qty {month_names[0]}']
-                adjusted_purchase_qty = max(first_month_purchase_qty - current_available_stock, 0)
+                adjusted_purchase_qty = max(first_month_purchase_qty - total_available_stock, 0)
                 editable_mps_df.at[idx, f'Purchase Qty {month_names[0]}'] = adjusted_purchase_qty
 
             # Display the adjusted demand with "How Many to Purchase" columns
