@@ -4,6 +4,7 @@ import numpy as np
 from io import BytesIO
 import logging
 from datetime import datetime
+import math
 
 def calculate_sales_velocity_90days(sales_data):
     sales_data['Total Quantity'] = sales_data['net_quantity']
@@ -205,7 +206,7 @@ with tabs[0]:
 # Tab 2: Master Procurement Schedule
 with tabs[1]:
     st.header("Master Procurement Schedule (MPS)")
-    if sales_data is not None and inventory_data is not None:
+    if inventory_data is not None:
         # Filter out discontinued items
         active_inventory = inventory_data[inventory_data['Group name'] != 'Discontinued']
         
@@ -218,13 +219,12 @@ with tabs[1]:
         # Filter to include only procured items
         procured_inventory = active_inventory[active_inventory['Procurement Type'] == 'Purchased']
         
-        # Calculate sales velocity
-        sales_velocity = calculate_sales_velocity_90days(sales_data)
+        # Prepare the MPS dataframe
+        mps_df = procured_inventory[['Part description', 'Part No.', 'Available', 'Lead time']].copy()
+        mps_df.rename(columns={'Product description': 'Product', 'Part description': 'Product', 'Part No.': 'SKU', 'Available': 'Current Available Stock', 'Lead time': 'Lead Time (Days)'}, inplace=True)
         
-        # Filter procured_inventory to include only items with demand
-        procured_inventory['Part No.'] = procured_inventory['Part No.'].astype(str)
-        skus_with_demand = sales_velocity[sales_velocity > 0].index.tolist()
-        procured_inventory = procured_inventory[procured_inventory['Part No.'].isin(skus_with_demand)]
+        # Convert Lead Time to integer
+        mps_df['Lead Time (Days)'] = mps_df['Lead Time (Days)'].fillna(30).astype(int)
         
         # Generate list of months and days
         from datetime import datetime
@@ -238,31 +238,52 @@ with tabs[1]:
         # For each month, get the month name and year
         month_names = [month.strftime("%B %Y") for month in months]
 
-        # For each month, get the number of days in the month
-        number_of_days_in_month = [pd.Period(month.strftime("%Y-%m")).days_in_month for month in months]
+        # Initialize the forecasted demand per month with zeros
+        for month_name in month_names:
+            mps_df[month_name] = 0
         
-        # Prepare the MPS dataframe
-        mps_df = procured_inventory[['Part description', 'Part No.', 'Available']].copy()
-        mps_df.rename(columns={'Product description': 'Product', 'Part description': 'Product', 'Part No.': 'SKU', 'Available': 'Current Available Stock'}, inplace=True)
-        
-        for i, month_name in enumerate(month_names):
-            days_in_month = number_of_days_in_month[i]
-            mps_df[month_name] = mps_df['SKU'].apply(lambda sku: round(sales_velocity.get(sku, 0) * days_in_month))
-        
-        # Allow users to adjust the demand
-        st.subheader("Forecasted Demand (Editable)")
+        # Allow users to input planned demand
+        st.subheader("Input Planned Demand (Editable)")
         editable_mps_df = st.data_editor(mps_df)
-
-        # Calculate total adjusted demand over next 6 months
+        
+        # Calculate total planned demand over next 6 months
         editable_mps_df['Total Demand'] = editable_mps_df[month_names].sum(axis=1)
         
-        # Determine stock status
-        editable_mps_df['Status'] = editable_mps_df.apply(
-            lambda row: 'Good' if row['Total Demand'] <= row['Current Available Stock'] else 'Bad', axis=1
-        )
-        
-        # Display the adjusted demand without color coding
-        st.subheader("Adjusted Demand with Total and Status")
+        # Calculate "How Many to Purchase" for each month based on lead time
+        import math
+
+        # Calculate LeadTimeMonths
+        editable_mps_df['LeadTimeMonths'] = editable_mps_df['Lead Time (Days)'].apply(lambda x: math.ceil(x / 30))
+
+        # Initialize Purchase Qty columns
+        for month_name in month_names:
+            editable_mps_df[f'Purchase Qty {month_name}'] = 0
+
+        # For each SKU, calculate Purchase Qty per month
+        for idx, row in editable_mps_df.iterrows():
+            lead_time_months = int(row['LeadTimeMonths'])
+            current_available_stock = row['Current Available Stock']
+            # For each month
+            for i, month_name in enumerate(month_names):
+                demand_qty = row[month_name]
+                purchase_month_index = i - lead_time_months
+                if purchase_month_index >= 0:
+                    purchase_month_name = month_names[purchase_month_index]
+                    # Accumulate purchase quantities
+                    existing_qty = editable_mps_df.at[idx, f'Purchase Qty {purchase_month_name}']
+                    editable_mps_df.at[idx, f'Purchase Qty {purchase_month_name}'] = existing_qty + demand_qty
+                else:
+                    # Need to purchase in the first month
+                    existing_qty = editable_mps_df.at[idx, f'Purchase Qty {month_names[0]}']
+                    editable_mps_df.at[idx, f'Purchase Qty {month_names[0]}'] = existing_qty + demand_qty
+
+            # Adjust Purchase Qty in first month for current available stock
+            first_month_purchase_qty = editable_mps_df.at[idx, f'Purchase Qty {month_names[0]}']
+            adjusted_purchase_qty = max(first_month_purchase_qty - current_available_stock, 0)
+            editable_mps_df.at[idx, f'Purchase Qty {month_names[0]}'] = adjusted_purchase_qty
+
+        # Display the adjusted demand with "How Many to Purchase" columns
+        st.subheader("Adjusted Demand with Purchase Quantities")
         st.write(editable_mps_df)
         
         # Allow download to Excel
@@ -279,9 +300,6 @@ with tabs[1]:
                 format1 = workbook.add_format({'num_format': '#,##0'})
                 worksheet.set_column(0, len(df.columns)-1, 15, format1)
                 
-                # Removed conditional formatting
-                # Now, the Excel file will not have color coding in the 'Status' column.
-            
             processed_data = output.getvalue()
             return processed_data
         
@@ -295,4 +313,4 @@ with tabs[1]:
         )
         
     else:
-        st.warning("Please upload both 90-Day Sales and Inventory CSV files to proceed.")
+        st.warning("Please upload the Inventory CSV file to proceed.")
