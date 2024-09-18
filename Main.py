@@ -207,53 +207,64 @@ with tabs[0]:
 with tabs[1]:
     st.header("Master Procurement Schedule (MPS)")
     if inventory_data is not None and sales_data is not None:
-        # Filter out discontinued items
-        active_inventory = inventory_data[inventory_data['Group name'] != 'Discontinued']
-        
-        # Convert "Is procured item" from 0/1 to text
-        if 'Is procured item' in active_inventory.columns:
-            active_inventory['Procurement Type'] = active_inventory['Is procured item'].apply(lambda x: 'Purchased' if x == 1 else 'Manufactured')
+        # Initialize session state for mps_df if it doesn't exist
+        if 'mps_df' not in st.session_state:
+            # Filter out discontinued items
+            active_inventory = inventory_data[inventory_data['Group name'] != 'Discontinued']
+            
+            # Convert "Is procured item" from 0/1 to text
+            if 'Is procured item' in active_inventory.columns:
+                active_inventory['Procurement Type'] = active_inventory['Is procured item'].apply(lambda x: 'Purchased' if x == 1 else 'Manufactured')
+            else:
+                active_inventory['Procurement Type'] = 'Unknown'
+            
+            # Filter to include only procured items
+            procured_inventory = active_inventory[active_inventory['Procurement Type'] == 'Purchased']
+            
+            # Calculate sales velocity
+            sales_velocity = calculate_sales_velocity_90days(sales_data)
+            
+            # Filter procured_inventory to include only items with demand
+            procured_inventory['Part No.'] = procured_inventory['Part No.'].astype(str)
+            skus_with_demand = sales_velocity[sales_velocity > 0].index.tolist()
+            procured_inventory_with_demand = procured_inventory[procured_inventory['Part No.'].isin(skus_with_demand)]
+            
+            # Prepare the MPS dataframe
+            mps_df = procured_inventory_with_demand[['Part description', 'Part No.', 'Available', 'Lead time']].copy()
+            mps_df.rename(columns={'Product description': 'Product', 'Part description': 'Product', 'Part No.': 'SKU', 'Available': 'Current Available Stock', 'Lead time': 'Lead Time (Days)'}, inplace=True)
+            
+            # Convert Lead Time to integer
+            mps_df['Lead Time (Days)'] = mps_df['Lead Time (Days)'].fillna(30).astype(int)
+            
+            # Generate list of months and days
+            from datetime import datetime
+
+            # Get current date
+            current_date = datetime.now()
+
+            # Generate list of months for the next 6 months
+            months = pd.date_range(current_date, periods=6, freq='MS').to_pydatetime().tolist()
+
+            # For each month, get the month name and year
+            month_names = [month.strftime("%B %Y") for month in months]
+
+            # For each month, get the number of days in the month
+            number_of_days_in_month = [pd.Period(month.strftime("%Y-%m")).days_in_month for month in months]
+            
+            # Calculate forecasted demand per month based on sales velocity
+            for i, month_name in enumerate(month_names):
+                days_in_month = number_of_days_in_month[i]
+                mps_df[month_name] = mps_df['SKU'].apply(lambda sku: round(sales_velocity.get(sku, 0) * days_in_month))
+            
+            # Store mps_df in session state
+            st.session_state.mps_df = mps_df
+            st.session_state.month_names = month_names
+            st.session_state.procured_inventory = procured_inventory
         else:
-            active_inventory['Procurement Type'] = 'Unknown'
-        
-        # Filter to include only procured items
-        procured_inventory = active_inventory[active_inventory['Procurement Type'] == 'Purchased']
-        
-        # Calculate sales velocity
-        sales_velocity = calculate_sales_velocity_90days(sales_data)
-        
-        # Filter procured_inventory to include only items with demand
-        procured_inventory['Part No.'] = procured_inventory['Part No.'].astype(str)
-        skus_with_demand = sales_velocity[sales_velocity > 0].index.tolist()
-        procured_inventory_with_demand = procured_inventory[procured_inventory['Part No.'].isin(skus_with_demand)]
-        
-        # Prepare the MPS dataframe
-        mps_df = procured_inventory_with_demand[['Part description', 'Part No.', 'Available', 'Lead time']].copy()
-        mps_df.rename(columns={'Product description': 'Product', 'Part description': 'Product', 'Part No.': 'SKU', 'Available': 'Current Available Stock', 'Lead time': 'Lead Time (Days)'}, inplace=True)
-        
-        # Convert Lead Time to integer
-        mps_df['Lead Time (Days)'] = mps_df['Lead Time (Days)'].fillna(30).astype(int)
-        
-        # Generate list of months and days
-        from datetime import datetime
+            mps_df = st.session_state.mps_df
+            month_names = st.session_state.month_names
+            procured_inventory = st.session_state.procured_inventory
 
-        # Get current date
-        current_date = datetime.now()
-
-        # Generate list of months for the next 6 months
-        months = pd.date_range(current_date, periods=6, freq='MS').to_pydatetime().tolist()
-
-        # For each month, get the month name and year
-        month_names = [month.strftime("%B %Y") for month in months]
-
-        # For each month, get the number of days in the month
-        number_of_days_in_month = [pd.Period(month.strftime("%Y-%m")).days_in_month for month in months]
-        
-        # Calculate forecasted demand per month based on sales velocity
-        for i, month_name in enumerate(month_names):
-            days_in_month = number_of_days_in_month[i]
-            mps_df[month_name] = mps_df['SKU'].apply(lambda sku: round(sales_velocity.get(sku, 0) * days_in_month))
-        
         # Allow users to add new products
         st.subheader("Add New Products to MPS")
         # Get list of products not already in MPS
@@ -281,17 +292,22 @@ with tabs[1]:
                 # Append the new row to mps_df using pd.concat()
                 new_row_df = pd.DataFrame([new_row])
                 mps_df = pd.concat([mps_df, new_row_df], ignore_index=True)
-        
+            # Update the mps_df in session state
+            st.session_state.mps_df = mps_df
+
         # Reset index to avoid any issues
         mps_df.reset_index(drop=True, inplace=True)
-        
+
         # Allow users to adjust the demand
         st.subheader("Forecasted Demand (Editable)")
-        editable_mps_df = st.data_editor(mps_df)
+        editable_mps_df = st.data_editor(mps_df, key='mps_editor')
+
+        # Update mps_df in session state with edited data
+        st.session_state.mps_df = editable_mps_df
 
         # Calculate total adjusted demand over next 6 months
         editable_mps_df['Total Demand'] = editable_mps_df[month_names].sum(axis=1)
-        
+
         # Calculate "How Many to Purchase" for each month based on lead time
         # Calculate LeadTimeMonths
         editable_mps_df['LeadTimeMonths'] = editable_mps_df['Lead Time (Days)'].apply(lambda x: math.ceil(x / 30))
@@ -327,7 +343,7 @@ with tabs[1]:
         # Display the adjusted demand with "How Many to Purchase" columns
         st.subheader("Adjusted Demand with Purchase Quantities")
         st.write(editable_mps_df)
-        
+
         # Allow download to Excel
         def mps_to_excel(df):
             output = BytesIO()
@@ -344,7 +360,7 @@ with tabs[1]:
                 
             processed_data = output.getvalue()
             return processed_data
-        
+
         excel_data = mps_to_excel(editable_mps_df)
         
         st.download_button(
