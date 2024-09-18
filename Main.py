@@ -279,32 +279,32 @@ def mps_to_excel(df):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='MPS')
-                
-                # Get the xlsxwriter workbook and worksheet objects.
-                workbook  = writer.book
-                worksheet = writer.sheets['MPS']
-                
-                # Format the columns.
-                format1 = workbook.add_format({'num_format': '#,##0'})
-                worksheet.set_column(0, len(df.columns)-1, 15, format1)
-                
-                # Apply conditional formatting to 'Status' column
-                status_col = df.columns.get_loc('Status')
-                worksheet.conditional_format(1, status_col, len(df), status_col, {
-                    'type':     'text',
-                    'criteria': 'containing',
-                    'value':    'Good',
-                    'format':   workbook.add_format({'bg_color': '#C6EFCE', 'font_color': '#006100'})
-                })
-                worksheet.conditional_format(1, status_col, len(df), status_col, {
-                    'type':     'text',
-                    'criteria': 'containing',
-                    'value':    'Bad',
-                    'format':   workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
-                })
-                
-            processed_data = output.getvalue()
-            return processed_data
+        
+        # Get the xlsxwriter workbook and worksheet objects.
+        workbook = writer.book  # Ensure this is properly indented
+        worksheet = writer.sheets['MPS']
+        
+        # Format the columns.
+        format1 = workbook.add_format({'num_format': '#,##0'})
+        worksheet.set_column(0, len(df.columns)-1, 15, format1)
+        
+        # Apply conditional formatting to 'Status' column
+        status_col = df.columns.get_loc('Status')
+        worksheet.conditional_format(1, status_col, len(df), status_col, {
+            'type':     'text',
+            'criteria': 'containing',
+            'value':    'Good',
+            'format':   workbook.add_format({'bg_color': '#C6EFCE', 'font_color': '#006100'})
+        })
+        worksheet.conditional_format(1, status_col, len(df), status_col, {
+            'type':     'text',
+            'criteria': 'containing',
+            'value':    'Bad',
+            'format':   workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
+        })
+    
+    processed_data = output.getvalue()
+    return processed_data
         
         excel_data = mps_to_excel(editable_mps_df)
         
