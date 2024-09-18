@@ -262,9 +262,17 @@ with tabs[1]:
         
         # Display the adjusted demand with status
         st.subheader("Adjusted Demand with Total and Status")
-        st.write(editable_mps_df.style.apply(
-            lambda x: ['background-color: lightgreen' if v == 'Good' else 'background-color: pink' for v in x['Status']], axis=1
-        ))
+        # Display the adjusted demand with status
+st.subheader("Adjusted Demand with Total and Status")
+
+def highlight_row(row):
+    # Determine the background color based on 'Status'
+    color = 'background-color: lightgreen' if row['Status'] == 'Good' else 'background-color: pink'
+    # Create a list of styles for the entire row
+    return [color]*len(row)
+
+st.write(editable_mps_df.style.apply(highlight_row, axis=1))
+
         
         # Allow download to Excel
         def mps_to_excel(df):
