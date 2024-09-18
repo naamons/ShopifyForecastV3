@@ -41,7 +41,7 @@ def generate_report(sales_data, inventory_data, safety_stock_days):
         velocity = sales_velocity.get(sku, 0)
         if velocity <= 0:
             continue  # Skip SKUs with no sales activity
-        
+
         forecast_30_qty = round(forecast_30.get(sku, 0))
         current_available = active_inventory.loc[active_inventory['Part No.'] == sku, 'Available'].values[0]
         inbound_qty = active_inventory.loc[active_inventory['Part No.'] == sku, 'Expected, available'].values[0]
@@ -130,10 +130,6 @@ def to_excel(forecast_df, reorder_df, total_reorder_cost):
             for i, col in enumerate(df.columns):
                 column_len = df[col].astype(str).map(len).max()
                 worksheet.set_column(i, i, column_len + 2)  # Adjust the width
-
-        # Highlight the "Qty to Reorder Now" column in a different color
-        reorder_col_index = reorder_df.columns.get_loc("Qty to Reorder Now")
-        reorder_sheet.set_column(reorder_col_index, reorder_col_index, None, workbook.add_format({'bg_color': '#FFC7CE'}))
 
         # Write the total reorder cost at the top of the Reorder sheet
         reorder_sheet.write(0, max_col, 'Total Reorder Cost')
@@ -225,6 +221,11 @@ with tabs[1]:
         # Calculate sales velocity
         sales_velocity = calculate_sales_velocity_90days(sales_data)
         
+        # Filter procured_inventory to include only items with demand
+        procured_inventory['Part No.'] = procured_inventory['Part No.'].astype(str)
+        skus_with_demand = sales_velocity[sales_velocity > 0].index.tolist()
+        procured_inventory = procured_inventory[procured_inventory['Part No.'].isin(skus_with_demand)]
+        
         # Generate list of months and days
         from datetime import datetime
 
@@ -242,7 +243,7 @@ with tabs[1]:
         
         # Prepare the MPS dataframe
         mps_df = procured_inventory[['Part description', 'Part No.', 'Available']].copy()
-        mps_df.rename(columns={'Part description': 'Product', 'Part No.': 'SKU', 'Available': 'Current Available Stock'}, inplace=True)
+        mps_df.rename(columns={'Product description': 'Product', 'Part description': 'Product', 'Part No.': 'SKU', 'Available': 'Current Available Stock'}, inplace=True)
         
         for i, month_name in enumerate(month_names):
             days_in_month = number_of_days_in_month[i]
@@ -260,17 +261,10 @@ with tabs[1]:
             lambda row: 'Good' if row['Total Demand'] <= row['Current Available Stock'] else 'Bad', axis=1
         )
         
-        # Display the adjusted demand with status
+        # Display the adjusted demand without color coding
         st.subheader("Adjusted Demand with Total and Status")
-
-        def highlight_row(row):
-            # Determine the background color based on 'Status'
-            color = 'background-color: lightgreen' if row['Status'] == 'Good' else 'background-color: pink'
-            # Create a list of styles for the entire row
-            return [color]*len(row)
-
-        st.write(editable_mps_df.style.apply(highlight_row, axis=1))
-
+        st.write(editable_mps_df)
+        
         # Allow download to Excel
         def mps_to_excel(df):
             output = BytesIO()
@@ -285,20 +279,8 @@ with tabs[1]:
                 format1 = workbook.add_format({'num_format': '#,##0'})
                 worksheet.set_column(0, len(df.columns)-1, 15, format1)
                 
-                # Apply conditional formatting to 'Status' column
-                status_col = df.columns.get_loc('Status')
-                worksheet.conditional_format(1, status_col, len(df), status_col, {
-                    'type':     'text',
-                    'criteria': 'containing',
-                    'value':    'Good',
-                    'format':   workbook.add_format({'bg_color': '#C6EFCE', 'font_color': '#006100'})
-                })
-                worksheet.conditional_format(1, status_col, len(df), status_col, {
-                    'type':     'text',
-                    'criteria': 'containing',
-                    'value':    'Bad',
-                    'format':   workbook.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
-                })
+                # Removed conditional formatting
+                # Now, the Excel file will not have color coding in the 'Status' column.
             
             processed_data = output.getvalue()
             return processed_data
