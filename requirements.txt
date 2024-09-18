@@ -4,4 +4,4 @@ numpy
 scikit-learn
 xlsxwriter
 matplotlib
-st_aggrid
+streamlit-aggrid
