@@ -9,7 +9,7 @@ from st_aggrid import AgGrid, GridOptionsBuilder, DataReturnMode, GridUpdateMode
 
 def calculate_sales_velocity_90days(sales_data):
     sales_data['Total Quantity'] = sales_data['Net items sold']
-    sales_velocity = sales_data.groupby('variant_sku')['Total Quantity'].sum() / 90  # Average daily sales over 90 days
+    sales_velocity = sales_data.groupby('Product variant SKU')['Total Quantity'].sum() / 90  # Average daily sales over 90 days
     return sales_velocity
 
 def generate_forecast(sales_velocity, days=30):
