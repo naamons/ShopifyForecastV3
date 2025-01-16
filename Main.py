@@ -246,6 +246,15 @@ if sales_file and inventory_file:
     # Read the files
     sales_data = pd.read_csv(sales_file)
     inventory_data = pd.read_csv(inventory_file)
+
+    # **Add 'Procurement Type' to inventory_data here to avoid KeyError**
+    if 'Is procured item' in inventory_data.columns:
+        inventory_data['Procurement Type'] = inventory_data['Is procured item'].apply(lambda x: 'Purchased' if x == 1 else 'Manufactured')
+    else:
+        # Handle cases where 'Is procured item' is missing
+        st.warning("'Is procured item' column not found in Inventory Data. Setting 'Procurement Type' to 'Unknown' for all items.")
+        inventory_data['Procurement Type'] = 'Unknown'
+
 else:
     sales_data = None
     inventory_data = None
@@ -339,10 +348,16 @@ with tabs[1]:
         ][['Part description', 'Part No.', 'Available', 'Expected, available', 'Lead time']].copy()
 
         if not available_new_products.empty:
+            # To ensure the format_func works correctly, define it outside of selectbox
+            def format_sku(sku):
+                product = available_new_products[available_new_products['Part No.'] == sku]['Part description'].values
+                product = product[0] if len(product) > 0 else "Unknown Product"
+                return f"{sku} - {product}"
+
             new_product_sku = st.selectbox(
                 "Select SKU to Add",
                 options=available_new_products['Part No.'],
-                format_func=lambda x: f"{x} - {available_new_products[new_product_sku == available_new_products['Part No.']]['Part description'].values[0]}"
+                format_func=format_sku
             )
 
             # Fetch selected product details
