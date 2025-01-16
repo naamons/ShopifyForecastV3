@@ -3,11 +3,12 @@ import pandas as pd
 import numpy as np
 from io import BytesIO
 import logging
-from datetime import datetime, timedelta
 import math
 from st_aggrid import AgGrid, GridOptionsBuilder, DataReturnMode, GridUpdateMode
 
-# Configure logging
+# ------------------------------
+# Configure Logging
+# ------------------------------
 logging.basicConfig(level=logging.INFO)
 
 # ------------------------------
@@ -15,17 +16,30 @@ logging.basicConfig(level=logging.INFO)
 # ------------------------------
 
 def calculate_sales_velocity_90days(sales_data):
-    """Calculate average daily sales velocity over 90 days."""
+    """
+    Calculate average daily sales velocity over 90 days.
+    
+    Parameters:
+        sales_data (pd.DataFrame): Sales data containing 'Product variant SKU' and 'Net items sold'.
+    
+    Returns:
+        pd.Series: Sales velocity indexed by SKU.
+    """
     sales_data['Total Quantity'] = sales_data['Net items sold']
     sales_velocity = sales_data.groupby('Product variant SKU')['Total Quantity'].sum() / 90  # units/day
     return sales_velocity
 
-def generate_forecast(sales_velocity, days=30):
-    """Generate sales forecast based on sales velocity."""
-    return sales_velocity * days  # units
-
 def to_excel(df, sheet_name='Sheet1'):
-    """Convert DataFrame to Excel."""
+    """
+    Convert DataFrame to Excel format.
+    
+    Parameters:
+        df (pd.DataFrame): DataFrame to convert.
+        sheet_name (str): Name of the Excel sheet.
+    
+    Returns:
+        bytes: Excel file in bytes.
+    """
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name=sheet_name)
@@ -39,7 +53,12 @@ def to_excel(df, sheet_name='Sheet1'):
     return processed_data
 
 def initialize_mps():
-    """Initialize an empty MPS DataFrame."""
+    """
+    Initialize an empty Master Procurement Schedule (MPS) DataFrame.
+    
+    Returns:
+        pd.DataFrame: Empty MPS DataFrame with predefined columns.
+    """
     columns = [
         'Product', 'SKU', 'Current Stock', 'In Transit Units',
         'Lead Time (Days)', 'Shipping Time (Days)', 'Sales Velocity (units/day)'
@@ -47,10 +66,19 @@ def initialize_mps():
     mps_df = pd.DataFrame(columns=columns)
     return mps_df
 
-def suggest_products(sales_velocity, inventory_data, threshold=0.7, safety_stock_days=7):
+def suggest_products(sales_velocity, inventory_data, threshold=0.7, safety_stock_days=7, include_all_high_velocity=False):
     """
     Suggest products based on sales velocity and potential stockouts.
-    Returns a list of dictionaries with product details.
+    
+    Parameters:
+        sales_velocity (pd.Series): Sales velocity indexed by SKU.
+        inventory_data (pd.DataFrame): Inventory data containing 'Part No.', 'Available', 'Expected, available', etc.
+        threshold (float): Minimum sales velocity to consider a product as high velocity.
+        safety_stock_days (int): Number of days to maintain as safety stock.
+        include_all_high_velocity (bool): If True, include all high-velocity products regardless of stockout risk.
+    
+    Returns:
+        list of dict: List containing product details for suggestions.
     """
     suggestions = []
     for sku, velocity in sales_velocity.items():
@@ -66,7 +94,9 @@ def suggest_products(sales_velocity, inventory_data, threshold=0.7, safety_stock
         total_available = current_stock + in_transit
         # Calculate demand during lead time
         demand_during_lead = velocity * lead_time
-        if total_available < demand_during_lead + safety_stock:
+
+        if include_all_high_velocity:
+            # Suggest all high-velocity products
             product_name = inventory_row['Part description'].values[0]
             suggestions.append({
                 'Product': product_name,
@@ -77,12 +107,32 @@ def suggest_products(sales_velocity, inventory_data, threshold=0.7, safety_stock
                 'Shipping Time (Days)': 0,  # Default value, user can edit
                 'Sales Velocity (units/day)': velocity
             })
+        else:
+            # Only suggest if at risk of stockout
+            if total_available < demand_during_lead + safety_stock:
+                product_name = inventory_row['Part description'].values[0]
+                suggestions.append({
+                    'Product': product_name,
+                    'SKU': sku,
+                    'Current Stock': current_stock,
+                    'In Transit Units': in_transit,
+                    'Lead Time (Days)': lead_time,
+                    'Shipping Time (Days)': 0,  # Default value, user can edit
+                    'Sales Velocity (units/day)': velocity
+                })
     return suggestions
 
 def generate_procurement_plan(mps_df, safety_stock_days=7, months_ahead=12):
     """
     Generate a monthly procurement plan for each product in MPS.
-    Returns a DataFrame with the plan.
+    
+    Parameters:
+        mps_df (pd.DataFrame): Master Procurement Schedule DataFrame.
+        safety_stock_days (int): Number of days to maintain as safety stock.
+        months_ahead (int): Number of months ahead to generate the plan for.
+    
+    Returns:
+        pd.DataFrame: Procurement plan detailing orders per month.
     """
     plan = []
 
@@ -129,11 +179,110 @@ def generate_procurement_plan(mps_df, safety_stock_days=7, months_ahead=12):
     plan_df = pd.DataFrame(plan)
     return plan_df
 
+def generate_report(sales_data, inventory_data, safety_stock_days):
+    """
+    Generate forecast and reorder reports based on sales and inventory data.
+    
+    Parameters:
+        sales_data (pd.DataFrame): Sales data containing 'Product variant SKU' and 'Net items sold'.
+        inventory_data (pd.DataFrame): Inventory data containing 'Part No.', 'Available', 'Expected, available', etc.
+        safety_stock_days (int): Number of days to maintain as safety stock.
+    
+    Returns:
+        tuple: Forecast DataFrame, Reorder DataFrame, Total Reorder Cost.
+    """
+    sales_velocity = calculate_sales_velocity_90days(sales_data)
+    forecast_30 = generate_forecast(sales_velocity, 30)
+
+    # Filter out discontinued items
+    active_inventory = inventory_data[inventory_data['Group name'] != 'Discontinued'].copy()
+
+    # Impute lead time: Assume 30 days where lead time is missing
+    active_inventory['Lead time'] = active_inventory['Lead time'].fillna(30)
+
+    # Fill missing costs with 0
+    active_inventory['Cost'] = active_inventory['Cost'].fillna(0)
+
+    forecast_report = []
+    reorder_report = []
+    total_reorder_cost = 0  # Initialize total reorder cost
+
+    for idx, row in active_inventory.iterrows():
+        sku = row['Part No.']
+        product_name = row['Part description']
+        velocity = sales_velocity.get(sku, 0)
+        if velocity <= 0:
+            continue  # Skip SKUs with no sales activity
+
+        forecast_30_qty = round(forecast_30.get(sku, 0))
+        current_available = row['Available']
+        inbound_qty = row['Expected, available']
+        lead_time = row['Lead time']
+        cost = row['Cost']
+        procurement_type = row['Procurement Type']
+
+        # Forecasted inventory need including lead time and safety stock
+        forecast_need_lead_time = round(velocity * lead_time)
+        safety_stock = round(velocity * safety_stock_days)
+
+        # Reorder quantity calculation including safety stock
+        reorder_qty = max(forecast_30_qty + forecast_need_lead_time + safety_stock - (current_available + inbound_qty), 0)
+        reorder_cost = reorder_qty * cost
+
+        # Add the reorder cost to the total
+        total_reorder_cost += reorder_cost
+
+        forecast_report.append([
+            product_name, sku, reorder_qty, velocity, forecast_30_qty,
+            current_available, inbound_qty, lead_time, safety_stock,
+            forecast_need_lead_time, reorder_cost, cost, procurement_type
+        ])
+
+        if reorder_qty > 0:
+            reorder_report.append([
+                product_name, sku, reorder_qty, current_available,
+                inbound_qty, lead_time, safety_stock, forecast_30_qty,
+                reorder_cost, cost, procurement_type
+            ])
+
+    forecast_df = pd.DataFrame(forecast_report, columns=[
+        'Product', 'SKU', 'Qty to Reorder Now', 'Sales Velocity',
+        'Forecast Sales Qty (30 Days)', 'Current Available Stock',
+        'Inbound Stock', 'Lead Time (Days)', 'Safety Stock',
+        'Forecast Inventory Need (With Lead Time)', 'Reorder Cost',
+        'Cost per Unit', 'Procurement Type'
+    ])
+
+    reorder_df = pd.DataFrame(reorder_report, columns=[
+        'Product', 'SKU', 'Qty to Reorder Now', 'Current Available Stock',
+        'Inbound Stock', 'Lead Time (Days)', 'Safety Stock',
+        'Forecast Sales Qty (30 Days)', 'Reorder Cost',
+        'Cost per Unit', 'Procurement Type'
+    ])
+
+    # Ensure relevant columns are integers where applicable
+    int_columns_forecast = [
+        'Qty to Reorder Now', 'Forecast Sales Qty (30 Days)',
+        'Current Available Stock', 'Inbound Stock', 'Lead Time (Days)',
+        'Safety Stock', 'Forecast Inventory Need (With Lead Time)'
+    ]
+    forecast_df[int_columns_forecast] = forecast_df[int_columns_forecast].astype(int)
+
+    int_columns_reorder = [
+        'Qty to Reorder Now', 'Current Available Stock',
+        'Inbound Stock', 'Lead Time (Days)', 'Safety Stock',
+        'Forecast Sales Qty (30 Days)'
+    ]
+    reorder_df[int_columns_reorder] = reorder_df[int_columns_reorder].astype(int)
+
+    return forecast_df, reorder_df, total_reorder_cost
+
 # ------------------------------
 # Streamlit App
 # ------------------------------
 
 def main():
+    # Set page configuration
     st.set_page_config(page_title="Inventory Management System", layout="wide")
     st.title("Inventory Management System")
 
@@ -145,9 +294,10 @@ def main():
     # ------------------------------
     st.sidebar.header("Upload Data & Settings")
 
+    # File uploaders
     sales_file = st.sidebar.file_uploader(
         "Upload 90-Day Sales Data (CSV)", type="csv",
-        help="Upload the 'Forecast 90' Shopify report. This file should contain columns such as 'variant_sku' and 'net_quantity'."
+        help="Upload the 'Forecast 90' Shopify report. This file should contain columns such as 'Product variant SKU' and 'Net items sold'."
     )
 
     inventory_file = st.sidebar.file_uploader(
@@ -171,6 +321,13 @@ def main():
         value=0.7,
         step=0.1,
         help="Set the minimum sales velocity to consider a product as high velocity. The default is 0.7 units/day."
+    )
+
+    # Checkbox to include all high-velocity products
+    include_all_high_velocity = st.sidebar.checkbox(
+        "Include All High-Velocity Products",
+        value=False,
+        help="If checked, all high-velocity products will be suggested regardless of current stock levels."
     )
 
     # ------------------------------
@@ -225,13 +382,13 @@ def main():
                     # Display total reorder cost at the top of the report
                     st.write(f"**Total Reorder Cost:** ${total_reorder_cost:,.2f}")
 
-                    excel_data = to_excel(forecast_df, sheet_name='Forecast')
+                    # Provide download buttons
+                    forecast_excel = to_excel(forecast_df, sheet_name='Forecast')
                     reorder_excel = to_excel(reorder_df, sheet_name='Reorder')
 
-                    # Provide download buttons
                     st.download_button(
                         label="Download Forecast Report as Excel",
-                        data=excel_data,
+                        data=forecast_excel,
                         file_name='Forecast_Report.xlsx',
                         mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                     )
@@ -259,14 +416,15 @@ def main():
             mps_df = st.session_state.mps_df
 
             # Section: Suggest Products to Add
-            st.subheader("Suggest High Velocity Products to Add to MPS")
+            st.subheader("Suggest High-Velocity Products to Add to MPS")
 
             if st.button("Suggest and Add All High Velocity Products"):
                 suggestions = suggest_products(
                     sales_velocity,
                     inventory_data,
                     threshold=velocity_threshold,
-                    safety_stock_days=safety_stock_days
+                    safety_stock_days=safety_stock_days,
+                    include_all_high_velocity=include_all_high_velocity
                 )
 
                 if suggestions:
@@ -277,11 +435,14 @@ def main():
                     existing_skus = mps_df['SKU'].tolist()
                     suggestions_df = suggestions_df[~suggestions_df['SKU'].isin(existing_skus)]
 
-                    # Add suggestions to MPS
-                    st.session_state.mps_df = pd.concat([mps_df, suggestions_df], ignore_index=True)
-                    mps_df = st.session_state.mps_df
+                    if not suggestions_df.empty:
+                        # Add suggestions to MPS
+                        st.session_state.mps_df = pd.concat([mps_df, suggestions_df], ignore_index=True)
+                        mps_df = st.session_state.mps_df
 
-                    st.success(f"Added {len(suggestions_df)} products to the MPS table.")
+                        st.success(f"Added {len(suggestions_df)} products to the MPS table.")
+                    else:
+                        st.info("All suggested products are already in the MPS table.")
                 else:
                     st.info("No products meet the criteria for addition to MPS.")
 
@@ -334,35 +495,38 @@ def main():
                         st.dataframe(procurement_plan)
 
                         # Download button for procurement plan
-                        excel_data_plan = to_excel(procurement_plan, sheet_name='Procurement_Plan')
+                        procurement_plan_excel = to_excel(procurement_plan, sheet_name='Procurement_Plan')
 
                         st.download_button(
                             label="Download Procurement Plan as Excel",
-                            data=excel_data_plan,
+                            data=procurement_plan_excel,
                             file_name='Procurement_Plan.xlsx',
                             mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                         )
                     else:
                         st.info("Procurement plan is empty. Please ensure MPS table is populated correctly.")
+
+                # Section: Display MPS Table
+                st.subheader("Current Master Procurement Schedule")
+
+                if not mps_df.empty:
+                    st.dataframe(mps_df)
+                    # Download MPS table
+                    mps_excel = to_excel(mps_df, sheet_name='MPS')
+                    st.download_button(
+                        label="Download MPS as Excel",
+                        data=mps_excel,
+                        file_name='MPS.xlsx',
+                        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    )
             else:
                 st.info("MPS table is currently empty. Use the 'Suggest and Add All High Velocity Products' button to populate the table.")
 
-            # Section: Display MPS Table
-            st.subheader("Current Master Procurement Schedule")
-
-            if not mps_df.empty:
-                st.dataframe(mps_df)
-                # Download MPS table
-                excel_data_mps = to_excel(mps_df, sheet_name='MPS')
-                st.download_button(
-                    label="Download MPS as Excel",
-                    data=excel_data_mps,
-                    file_name='MPS.xlsx',
-                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                )
         else:
             st.warning("Please upload both 90-Day Sales and Inventory CSV files to proceed.")
 
-# Run the app
+# ------------------------------
+# Run the Streamlit App
+# ------------------------------
 if __name__ == "__main__":
     main()
