@@ -34,12 +34,6 @@ def generate_report(sales_data, inventory_data, safety_stock_days):
     # Fill missing costs with 0
     active_inventory['Cost'] = active_inventory['Cost'].fillna(0)
 
-    # Convert "Is procured item" from 0/1 to text
-    if 'Is procured item' in active_inventory.columns:
-        active_inventory['Procurement Type'] = active_inventory['Is procured item'].apply(lambda x: 'Purchased' if x == 1 else 'Manufactured')
-    else:
-        active_inventory['Procurement Type'] = 'Unknown'
-
     forecast_report = []
     reorder_report = []
     total_reorder_cost = 0  # Initialize total reorder cost
@@ -164,50 +158,77 @@ def mps_to_excel(df):
     processed_data = output.getvalue()
     return processed_data
 
-# Initialize session state for MPS if not already done
-def initialize_mps(inventory_data, sales_data):
-    # Filter out discontinued items
-    active_inventory = inventory_data[inventory_data['Group name'] != 'Discontinued'].copy()
-
-    # Convert "Is procured item" from 0/1 to text
-    if 'Is procured item' in active_inventory.columns:
-        active_inventory['Procurement Type'] = active_inventory['Is procured item'].apply(lambda x: 'Purchased' if x == 1 else 'Manufactured')
-    else:
-        active_inventory['Procurement Type'] = 'Unknown'
-
-    # Filter to include only procured items
-    procured_inventory = active_inventory[active_inventory['Procurement Type'] == 'Purchased'].copy()
-
-    # Calculate sales velocity
-    sales_velocity = calculate_sales_velocity_90days(sales_data)
-
-    # Filter procured_inventory to include only items with demand
-    procured_inventory['Part No.'] = procured_inventory['Part No.'].astype(str)
-    skus_with_demand = sales_velocity[sales_velocity > 0].index.tolist()
-    procured_inventory_with_demand = procured_inventory[procured_inventory['Part No.'].isin(skus_with_demand)].copy()
-
-    # Prepare the MPS dataframe
-    mps_df = procured_inventory_with_demand[['Part description', 'Part No.', 'Available', 'Expected, available', 'Lead time']].copy()
-    mps_df.rename(columns={
-        'Part description': 'Product',
-        'Part No.': 'SKU',
-        'Available': 'Current Available Stock',
-        'Expected, available': 'Inbound Stock',
-        'Lead time': 'Lead Time (Days)'
-    }, inplace=True)
-
-    # Convert Lead Time to integer
-    mps_df['Lead Time (Days)'] = mps_df['Lead Time (Days)'].fillna(30).astype(int)
-
-    # Initialize empty MPS dataframe
-    mps_df = mps_df[['Product', 'SKU', 'Current Available Stock', 'Inbound Stock', 'Lead Time (Days)']].copy()
-
-    # Add empty columns for future calculations
-    mps_df['Qty to Reorder Now'] = 0
-    mps_df['Reorder Cost'] = 0.0
-    mps_df['Cost per Unit'] = 0.0
-
+# Function to initialize MPS dataframe
+def initialize_mps():
+    # Create an empty DataFrame with the desired columns
+    columns = [
+        'Product', 'SKU', 'Current Available Stock', 'In Transit Units',
+        'Lead Time (Days)', 'Shipping Time (Days)', 'Sales Velocity (units/day)',
+        'Qty to Order Each Month'
+    ]
+    mps_df = pd.DataFrame(columns=columns)
     return mps_df
+
+# Function to suggest products based on velocity and potential stockouts
+def suggest_products(sales_velocity, inventory_data, threshold=0.7, safety_stock_days=7):
+    suggestions = []
+    for sku, velocity in sales_velocity.items():
+        if velocity < threshold:
+            continue  # Skip products below the velocity threshold
+        inventory_row = inventory_data[inventory_data['Part No.'] == sku]
+        if inventory_row.empty:
+            continue
+        current_stock = inventory_row['Available'].values[0]
+        in_transit = inventory_row['Expected, available'].values[0]
+        lead_time = inventory_row['Lead time'].fillna(30).astype(int).values[0]
+        safety_stock = math.ceil(velocity * safety_stock_days)
+        total_available = current_stock + in_transit
+        # Calculate demand during lead time
+        demand_during_lead = velocity * lead_time
+        if total_available < demand_during_lead + safety_stock:
+            product_name = inventory_row['Part description'].values[0]
+            suggestions.append({
+                'Product': product_name,
+                'SKU': sku,
+                'Current Available Stock': current_stock,
+                'In Transit Units': in_transit,
+                'Lead Time (Days)': lead_time,
+                'Sales Velocity (units/day)': velocity
+            })
+    return suggestions
+
+# Function to generate procurement plan based on MPS
+def generate_procurement_plan(mps_df, safety_stock_days=7):
+    plan = []
+    for idx, row in mps_df.iterrows():
+        product = row['Product']
+        sku = row['SKU']
+        current_stock = row['Current Available Stock']
+        in_transit = row['In Transit Units']
+        lead_time = row['Lead Time (Days)']
+        shipping_time = row['Shipping Time (Days)']
+        velocity = row['Sales Velocity (units/day)']
+        qty_to_order = row['Qty to Order Each Month']
+
+        total_available = current_stock + in_transit
+        # Calculate total demand over lead time plus safety stock
+        demand = velocity * lead_time
+        safety_stock = velocity * safety_stock_days
+
+        # Calculate reorder quantity
+        reorder_qty = max(demand + safety_stock - total_available, 0)
+
+        plan.append({
+            'Product': product,
+            'SKU': sku,
+            'Qty to Order': reorder_qty,
+            'Safety Stock': safety_stock,
+            'Demand During Lead Time': demand,
+            'Total Available': total_available
+        })
+
+    plan_df = pd.DataFrame(plan)
+    return plan_df
 
 # Streamlit app
 st.title("Inventory Management System")
@@ -228,13 +249,22 @@ inventory_file = st.sidebar.file_uploader(
     help="Upload the inventory data file. This file should include columns such as 'Part No.', 'Available', 'Expected, available', 'Cost', 'Lead time', and 'Group name'."
 )
 
-# Add a slider for safety stock
+# Add sliders for safety stock and velocity threshold
 safety_stock_days = st.sidebar.slider(
     "Safety Stock (in days)",
     min_value=0,
     max_value=30,
     value=7,
     help="Adjust the safety stock buffer. The default is 7 days."
+)
+
+velocity_threshold = st.sidebar.slider(
+    "High Velocity Threshold (units/day)",
+    min_value=0.0,
+    max_value=5.0,
+    value=0.7,
+    step=0.1,
+    help="Set the minimum sales velocity to consider a product as high velocity. The default is 0.7 units/day."
 )
 
 # Read the uploaded files into DataFrames once
@@ -252,8 +282,11 @@ if sales_file and inventory_file:
         inventory_data['Procurement Type'] = inventory_data['Is procured item'].apply(lambda x: 'Purchased' if x == 1 else 'Manufactured')
     else:
         # Handle cases where 'Is procured item' is missing
-        st.warning("'Is procured item' column not found in Inventory Data. Setting 'Procurement Type' to 'Unknown' for all items.")
+        st.sidebar.warning("'Is procured item' column not found in Inventory Data. Setting 'Procurement Type' to 'Unknown' for all items.")
         inventory_data['Procurement Type'] = 'Unknown'
+
+    # Calculate sales velocity
+    sales_velocity = calculate_sales_velocity_90days(sales_data)
 
 else:
     sales_data = None
@@ -289,190 +322,101 @@ with tabs[0]:
 # Tab 2: Master Procurement Schedule
 with tabs[1]:
     st.header("Master Procurement Schedule (MPS)")
+
     if inventory_data is not None and sales_data is not None:
         # Initialize session state for MPS if it doesn't exist
         if 'mps_df' not in st.session_state:
-            st.session_state.mps_df = initialize_mps(inventory_data, sales_data)
-            st.session_state.suggestions = None  # To store product suggestions
+            st.session_state.mps_df = initialize_mps()
 
         mps_df = st.session_state.mps_df
 
-        # Suggest products to add based on sales velocity and stock levels
-        def suggest_products(sales_velocity, inventory_data, lead_time_days, safety_stock_days):
-            suggestions = []
-            for sku, velocity in sales_velocity.items():
-                if velocity <= 0:
-                    continue
-                inventory_row = inventory_data[inventory_data['Part No.'] == sku]
-                if inventory_row.empty:
-                    continue
-                current_available = inventory_row['Available'].values[0]
-                inbound_qty = inventory_row['Expected, available'].values[0]
-                lead_time = inventory_row['Lead time'].fillna(30).astype(int).values[0]
-                safety_stock = math.ceil(velocity * safety_stock_days)
-                total_available = current_available + inbound_qty
-                # Estimate when stock will run out
-                days_until_out = (total_available - safety_stock) / velocity if velocity else float('inf')
-                if days_until_out < lead_time:
-                    product_name = inventory_row['Part description'].values[0]
-                    suggestions.append(f"{sku} - {product_name}")
-            return suggestions
+        # Section: Suggest Products to Add
+        st.subheader("Suggest Products to Add to MPS")
 
-        # Generate suggestions
-        if st.button("Show Product Suggestions"):
+        if st.button("Suggest and Add All High Velocity Products"):
             suggestions = suggest_products(
-                calculate_sales_velocity_90days(sales_data),
+                sales_velocity,
                 inventory_data,
-                lead_time_days=30,  # You can adjust this as needed
+                threshold=velocity_threshold,
                 safety_stock_days=safety_stock_days
             )
+
             if suggestions:
-                st.subheader("Suggested Products to Add")
-                st.write("These products are selling well and may run out of stock before the lead time ends:")
-                for product in suggestions:
-                    st.write(f"- {product}")
-                st.session_state.suggestions = suggestions
+                # Convert suggestions to DataFrame
+                suggestions_df = pd.DataFrame(suggestions)
+
+                # Add suggestions to MPS
+                st.session_state.mps_df = pd.concat([st.session_state.mps_df, suggestions_df], ignore_index=True)
+
+                st.success(f"Added {len(suggestions)} products to the MPS table.")
             else:
-                st.write("No product suggestions at this time.")
-                st.session_state.suggestions = []
+                st.info("No products meet the criteria for addition to MPS.")
 
-        # Allow users to add products manually
-        st.subheader("Add New Product to MPS")
-
-        # Get list of products not already in MPS
-        existing_skus = mps_df['SKU'].tolist()
-        available_new_products = inventory_data[
-            (inventory_data['Procurement Type'] == 'Purchased') &
-            (~inventory_data['Part No.'].isin(existing_skus)) &
-            (inventory_data['Group name'] != 'Discontinued')
-        ][['Part description', 'Part No.', 'Available', 'Expected, available', 'Lead time']].copy()
-
-        if not available_new_products.empty:
-            # To ensure the format_func works correctly, define it outside of selectbox
-            def format_sku(sku):
-                product = available_new_products[available_new_products['Part No.'] == sku]['Part description'].values
-                product = product[0] if len(product) > 0 else "Unknown Product"
-                return f"{sku} - {product}"
-
-            new_product_sku = st.selectbox(
-                "Select SKU to Add",
-                options=available_new_products['Part No.'],
-                format_func=format_sku
-            )
-
-            # Fetch selected product details
-            selected_product = available_new_products[available_new_products['Part No.'] == new_product_sku].iloc[0]
-
-            with st.form("add_product_form"):
-                new_product_name = selected_product['Part description']
-                new_current_stock = int(selected_product['Available'])
-                new_inbound_stock = int(selected_product['Expected, available'])
-                new_lead_time = st.number_input(
-                    "Lead Time (Days)",
-                    min_value=1,
-                    max_value=365,
-                    value=int(selected_product['Lead time']) if not pd.isna(selected_product['Lead time']) else 30
-                )
-                new_cost = st.number_input(
-                    "Cost per Unit",
-                    min_value=0.0,
-                    value=0.0,
-                    step=0.01
-                )
-                submitted = st.form_submit_button("Add Product")
-
-                if submitted:
-                    new_row = {
-                        'Product': new_product_name,
-                        'SKU': new_product_sku,
-                        'Current Available Stock': new_current_stock,
-                        'Inbound Stock': new_inbound_stock,
-                        'Lead Time (Days)': new_lead_time,
-                        'Qty to Reorder Now': 0,
-                        'Reorder Cost': 0.0,
-                        'Cost per Unit': new_cost
-                    }
-                    mps_df = mps_df.append(new_row, ignore_index=True)
-                    st.session_state.mps_df = mps_df
-                    st.success(f"Added {new_product_name} to MPS.")
-        else:
-            st.info("No available products to add.")
-
-        # Display and edit the MPS table
+        # Section: Display MPS Table (Editable)
         st.subheader("Master Procurement Schedule (Editable)")
 
-        # Configure AgGrid options
-        gb = GridOptionsBuilder.from_dataframe(mps_df)
-        gb.configure_default_column(editable=True, resizable=True)
-        gb.configure_columns(['Product', 'SKU'], editable=False, pinned='left')  # Make Product and SKU non-editable
-        grid_options = gb.build()
+        if not st.session_state.mps_df.empty:
+            # Configure AgGrid options
+            gb = GridOptionsBuilder.from_dataframe(st.session_state.mps_df)
+            gb.configure_default_column(editable=True, resizable=True)
+            # Make certain columns non-editable
+            gb.configure_columns(['Product', 'SKU', 'Sales Velocity (units/day)'], editable=False, pinned='left')
+            grid_options = gb.build()
 
-        grid_response = AgGrid(
-            mps_df,
-            gridOptions=grid_options,
-            height=400,
-            width='100%',
-            data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
-            update_mode=GridUpdateMode.MODEL_CHANGED,
-            allow_unsafe_jscode=True,
-            enable_enterprise_modules=False,
-            fit_columns_on_grid_load=True
-        )
+            grid_response = AgGrid(
+                st.session_state.mps_df,
+                gridOptions=grid_options,
+                height=400,
+                width='100%',
+                data_return_mode=DataReturnMode.FILTERED_AND_SORTED,
+                update_mode=GridUpdateMode.MODEL_CHANGED,
+                allow_unsafe_jscode=True,
+                enable_enterprise_modules=False,
+                fit_columns_on_grid_load=True
+            )
 
-        edited_mps_df = grid_response['data']
-        edited_mps_df = pd.DataFrame(edited_mps_df)
+            edited_mps_df = grid_response['data']
+            edited_mps_df = pd.DataFrame(edited_mps_df)
 
-        if st.button("Update MPS"):
             # Update session state with edited data
-            st.session_state.mps_df = edited_mps_df
+            if edited_mps_df.equals(st.session_state.mps_df):
+                pass  # No changes made
+            else:
+                st.session_state.mps_df = edited_mps_df
 
-            # Recalculate reorder quantities and costs
-            # Fetch sales velocity
-            sales_velocity = calculate_sales_velocity_90days(sales_data)
+            # Section: Generate Procurement Plan
+            st.subheader("Generate Procurement Plan")
 
-            # Recalculate based on edited MPS
-            for idx, row in edited_mps_df.iterrows():
-                sku = row['SKU']
-                velocity = sales_velocity.get(sku, 0)
-                lead_time = row['Lead Time (Days)']
-                current_available = row['Current Available Stock']
-                inbound_stock = row['Inbound Stock']
-                cost_per_unit = row['Cost per Unit']
+            if st.button("Generate Procurement Plan"):
+                procurement_plan = generate_procurement_plan(st.session_state.mps_df, safety_stock_days)
 
-                # Calculate safety stock
-                safety_stock = math.ceil(velocity * safety_stock_days)
+                if not procurement_plan.empty:
+                    st.write("### Procurement Plan")
+                    st.dataframe(procurement_plan)
 
-                # Calculate total available
-                total_available = current_available + inbound_stock
+                    # Download button for procurement plan
+                    excel_data_plan = BytesIO()
+                    with pd.ExcelWriter(excel_data_plan, engine='xlsxwriter') as writer:
+                        procurement_plan.to_excel(writer, index=False, sheet_name='Procurement Plan')
+                        workbook = writer.book
+                        worksheet = writer.sheets['Procurement Plan']
+                        # Auto-adjust column widths
+                        for i, col in enumerate(procurement_plan.columns):
+                            column_len = procurement_plan[col].astype(str).map(len).max()
+                            worksheet.set_column(i, i, max(column_len + 2, 15))
+                    excel_data_plan.seek(0)
 
-                # Calculate reorder quantity
-                forecast_need_lead_time = math.ceil(velocity * lead_time)
-                forecast_30_qty = math.ceil(velocity * 30)
-                reorder_qty = max(forecast_30_qty + forecast_need_lead_time + safety_stock - total_available, 0)
-                reorder_cost = reorder_qty * cost_per_unit
+                    st.download_button(
+                        label="Download Procurement Plan as Excel",
+                        data=excel_data_plan,
+                        file_name='Procurement_Plan.xlsx',
+                        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    )
+                else:
+                    st.info("Procurement plan is empty. Please ensure MPS table is populated correctly.")
 
-                # Update the dataframe
-                edited_mps_df.at[idx, 'Qty to Reorder Now'] = reorder_qty
-                edited_mps_df.at[idx, 'Reorder Cost'] = reorder_cost
-
-            # Update session state
-            st.session_state.mps_df = edited_mps_df
-
-            st.success("MPS updated with new reorder quantities and costs.")
-
-        # Display the updated MPS
-        st.subheader("Updated Master Procurement Schedule")
-        st.dataframe(st.session_state.mps_df)
-
-        # Allow download to Excel
-        excel_data = mps_to_excel(st.session_state.mps_df)
-
-        st.download_button(
-            label="Download MPS as Excel",
-            data=excel_data,
-            file_name='MPS.xlsx',
-            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        )
+        else:
+            st.info("MPS table is currently empty. Use the 'Suggest and Add All High Velocity Products' button to populate the table.")
 
     else:
         st.warning("Please upload both 90-Day Sales and Inventory CSV files to proceed.")
